@@ -108,6 +108,7 @@ def init_state() -> None:
         float(annotation.get("confidence_threshold", 0.7)),
     )
     st.session_state.setdefault("selected_sources", [])
+    st.session_state.setdefault("selected_sources_draft", [])
     st.session_state.setdefault("source_suggestions", [])
     st.session_state.setdefault("messages", [])
     st.session_state.setdefault("generated_report_content", "")
@@ -292,6 +293,77 @@ def style_source_table(df: pd.DataFrame) -> Any:
         return [f"background-color: {color}" for _ in row]
 
     return df.style.apply(_row_style, axis=1)
+
+
+def style_source_table(df: pd.DataFrame) -> Any:
+    """Apply row colors by scraping risk level."""
+
+    def _row_style(row: pd.Series) -> list[str]:
+        colors = {
+            "low": "background-color: #1a3a1a",
+            "medium": "background-color: #3a3a1a",
+            "high": "background-color: #3a1a1a",
+        }
+        risk = str(row.get("Риск скрапинга", "")).lower()
+        color = colors.get(risk, "")
+        return [color for _ in row]
+
+    return df.style.apply(_row_style, axis=1)
+
+
+def normalize_source_suggestions(sources_data: list[Any]) -> pd.DataFrame:
+    """Normalize heterogeneous source payloads from Gemini into one table schema."""
+    normalized: list[dict[str, Any]] = []
+
+    for source in sources_data:
+        payload = source if isinstance(source, dict) else {}
+        normalized.append(
+            {
+                "Источник": payload.get("name")
+                or payload.get("source")
+                or payload.get("title")
+                or str(source),
+                "Тип": payload.get("type")
+                or payload.get("source_type")
+                or "—",
+                "Лицензия": payload.get("license")
+                or payload.get("license_type")
+                or "—",
+                "Строк (ориентир)": payload.get("estimated_rows")
+                or payload.get("rows")
+                or "~100-500",
+                "Риск скрапинга": payload.get("risk_level")
+                or payload.get("risk")
+                or "medium",
+            }
+        )
+
+    if not normalized:
+        normalized = [
+            {
+                "Источник": "StackExchange / форумы",
+                "Тип": "API/форум",
+                "Лицензия": "CC BY-SA 4.0",
+                "Строк (ориентир)": "~100-200",
+                "Риск скрапинга": "low",
+            },
+            {
+                "Источник": "RSS отраслевых медиа",
+                "Тип": "RSS",
+                "Лицензия": "editorial use",
+                "Строк (ориентир)": "~50-100",
+                "Риск скрапинга": "medium",
+            },
+            {
+                "Источник": "HuggingFace dataset",
+                "Тип": "dataset",
+                "Лицензия": "depends on dataset",
+                "Строк (ориентир)": "~300-500",
+                "Риск скрапинга": "low",
+            },
+        ]
+
+    return pd.DataFrame(normalized)
 
 
 def render_sidebar(llm_client: GeminiLLMClient) -> float:
@@ -926,6 +998,125 @@ def render_chat_tab(llm_client: GeminiLLMClient) -> None:
     user_input = st.chat_input("Задайте вопрос о данных или гипотезах...")
     if user_input:
         handle_chat_prompt(user_input, llm_client)
+
+
+def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
+    """Render onboarding flow for topic and source discovery."""
+    st.title("⛵ Smart Data Pipeline")
+
+    if st.session_state.get("topic") and not st.session_state.get("editing_topic", False):
+        st.subheader("Текущая конфигурация домена")
+        st.write(f"**Тема:** {st.session_state.get('topic')}")
+        st.write("**Классы:** " + ", ".join(st.session_state.get("current_classes", [])))
+        if st.button("Изменить тему", key="change_topic_button"):
+            st.session_state["editing_topic"] = True
+            st.rerun()
+        if st.session_state.get("selected_sources"):
+            st.success(
+                "Выбраны источники: "
+                + ", ".join(st.session_state.get("selected_sources", []))
+            )
+        return
+
+    st.subheader("Введите тему для классификации текстов")
+    topic = st.text_input(
+        "Тема пользователя",
+        value=st.session_state.get("topic", ""),
+        key="onboarding_topic_input",
+    ).strip()
+    if topic:
+        st.session_state["topic"] = topic
+
+    if st.button("🔍 Найти источники данных", key="find_sources_button"):
+        with st.spinner("Gemini ищет источники..."):
+            suggestion_payload = find_sources_with_llm(topic, llm_client)
+        st.session_state["source_suggestions"] = suggestion_payload.get("sources", [])
+        st.session_state["selected_sources_draft"] = []
+        if suggestion_payload.get("suggested_classes"):
+            st.session_state["current_classes"] = [
+                str(item).strip()
+                for item in suggestion_payload.get("suggested_classes", [])
+                if str(item).strip()
+            ]
+
+    suggestions = st.session_state.get("source_suggestions", [])
+    if suggestions:
+        df_sources = normalize_source_suggestions(suggestions)
+        source_names = df_sources["Источник"].astype(str).tolist()
+        current_signature = "|".join(source_names)
+        if st.session_state.get("source_suggestions_signature") != current_signature:
+            st.session_state["source_suggestions_signature"] = current_signature
+            st.session_state["selected_sources_draft"] = list(source_names)
+
+        items_per_page = 5
+        total_pages = max(
+            1,
+            (len(df_sources) + items_per_page - 1) // items_per_page,
+        )
+        if total_pages > 1:
+            page = int(
+                st.number_input(
+                    f"Страница (всего {total_pages})",
+                    min_value=1,
+                    max_value=total_pages,
+                    value=1,
+                    step=1,
+                    key="source_page_input",
+                )
+            )
+        else:
+            page = 1
+
+        start = (page - 1) * items_per_page
+        end = start + items_per_page
+        df_page = df_sources.iloc[start:end].copy()
+
+        st.dataframe(
+            style_source_table(df_page),
+            use_container_width=True,
+            hide_index=True,
+        )
+        if total_pages > 1:
+            st.caption(
+                f"Показано {start + 1}–{min(end, len(df_sources))} из {len(df_sources)} источников"
+            )
+
+        st.markdown("**Выберите источники для использования:**")
+        selected_set = set(st.session_state.get("selected_sources_draft", []))
+        for _, row in df_page.iterrows():
+            source_name = str(row["Источник"])
+            is_checked = st.checkbox(
+                source_name,
+                value=source_name in selected_set,
+                key=f"src_{source_name}",
+            )
+            if is_checked:
+                selected_set.add(source_name)
+            else:
+                selected_set.discard(source_name)
+
+        st.session_state["selected_sources_draft"] = [
+            name for name in source_names if name in selected_set
+        ]
+
+        if st.button("✅ Использовать выбранные источники", key="use_sources_button"):
+            selected_sources = list(st.session_state.get("selected_sources_draft", []))
+            st.session_state["selected_sources"] = selected_sources
+            st.session_state["editing_topic"] = False
+            cfg_data = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+            sources_cfg = cfg_data.setdefault("sources", {})
+            sources_cfg["selected"] = selected_sources
+            CONFIG_PATH.write_text(
+                yaml.safe_dump(
+                    cfg_data,
+                    allow_unicode=True,
+                    default_flow_style=False,
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+            st.success(f"Выбрано источников: {len(selected_sources)}")
+            st.rerun()
 
 
 def main() -> None:
