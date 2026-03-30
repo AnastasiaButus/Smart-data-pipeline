@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import sys
 from pathlib import Path
 from typing import Any
@@ -583,13 +584,18 @@ def render_analytics_tab(threshold: float) -> None:
 
     st.dataframe(pd.DataFrame(LICENSE_ROWS), use_container_width=True, hide_index=True)
 
-    if EDA_REPORT_PATH.exists():
-        st.link_button(
-            "📊 Открыть полный EDA отчёт",
-            EDA_REPORT_PATH.resolve().as_uri(),
-        )
+    eda_path = pathlib.Path("reports/eda_report.html")
+    if eda_path.exists():
+        with open(eda_path, "rb") as report_file:
+            st.download_button(
+                label="📊 Скачать EDA отчёт (HTML)",
+                data=report_file.read(),
+                file_name="eda_report.html",
+                mime="text/html",
+            )
+        st.info("💡 Для просмотра: откройте файл в браузере после скачивания")
     else:
-        st.info("EDA отчёт пока не найден: сначала выполните export_eda.py")
+        st.warning("EDA отчёт не найден. Запустите: python notebooks/export_eda.py")
 
     st.subheader("📋 Сформировать отчёт")
     section_col1, section_col2 = st.columns(2)

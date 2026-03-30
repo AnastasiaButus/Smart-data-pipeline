@@ -1,8 +1,10 @@
 # smart-data-pipeline
 ![WIP](https://img.shields.io/badge/status-WIP-yellow)
 ![Tests](https://img.shields.io/badge/tests-75%20passed-green)
-![EDA](https://img.shields.io/badge/EDA-interactive-blue)
+![Streamlit](https://img.shields.io/badge/UI-Streamlit-red)
+![HITL](https://img.shields.io/badge/HITL-%E2%9C%93-brightgreen)
 ![LLM](https://img.shields.io/badge/LLM-Gemini-orange)
+![EDA](https://img.shields.io/badge/EDA-interactive-blue)
 ![Python](https://img.shields.io/badge/python-3.12.6-blue)
 
 An end-to-end educational ML pipeline for domain-driven text classification with data collection, LLM-assisted domain reformulation, and human review.
@@ -59,11 +61,54 @@ Edit `.env` with your API keys, then edit `config.yaml` to set your classificati
 
 ## What it looks like
 
-> EDA Report - interactive, opens in the browser without a server
+### Streamlit Dashboard
 
-![Dataset overview](docs/screenshots/eda_overview.png)
-![WordCloud](docs/screenshots/eda_wordcloud.png)
-![Data quality](docs/screenshots/eda_quality.png)
+| Sidebar — прогресс пайплайна | HITL — проверка меток |
+|---|---|
+| ![Sidebar](docs/screenshots/ui_sidebar.png) | ![HITL](docs/screenshots/ui_hitl.png) |
+
+| Аналитика + конструктор отчёта | Чат с Gemini |
+|---|---|
+| ![Analytics](docs/screenshots/ui_analytics.png) | ![Chat](docs/screenshots/ui_chat.png) |
+
+## ✨ Features
+
+### 🤖 Multi-agent pipeline
+- **DataCollectionAgent** — сбор из 3+ источников: HuggingFace datasets, StackExchange API, RSS-ленты, форумы
+- **DataQualityAgent** — автоматическая чистка: HTML-артефакты, дубликаты, фильтрация коротких текстов
+- **AnnotationAgent** — zero-shot авторазметка (facebook/bart-large-mnli) + confidence scoring
+- **ActiveLearningAgent** — умный отбор примеров (entropy / margin / random стратегии) *(coming soon)*
+
+### 🧠 LLM-powered (Gemini)
+- Переформулировка темы пользователя → классы + ключевые слова
+- Объяснение проблем качества данных + рекомендации
+- Генерация гипотез после EDA на русском языке
+- Чат с данными прямо в дашборде
+- Fallback chain: gemini-2.5-flash → gemini-flash-latest → gemma
+
+### 👤 Human-in-the-Loop (HITL)
+- Примеры с confidence < порога → очередь на проверку
+- Streamlit интерфейс: принять / исправить метку
+- Фильтрация по классу и источнику
+- Сохранение правок + скачивание CSV
+
+### 📊 Interactive EDA Report
+- 8 Plotly-графиков (zoom, hover, pan)
+- WordCloud с автоматической фильтрацией HTML-мусора
+- LLM-гипотезы на русском языке
+- Сворачиваемые секции
+- Открывается без сервера (один HTML файл)
+
+### 📋 Report Builder
+- Пользователь выбирает секции галочками
+- Форматы: HTML / Markdown / Telegram
+- Таблица источников с лицензиями и статусом скрапинга
+
+### 🔧 Developer-friendly
+- Легко сменить тему: одна строка в config.yaml
+- Все шаги покрыты pytest (75+ тестов)
+- Prefect оркестрация — запуск одной командой
+- Пропуск любого шага с предупреждением о последствиях
 
 ## How to change the topic
 
