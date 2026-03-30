@@ -737,6 +737,29 @@ def render_analytics_tab(threshold: float) -> None:
             "Запустите: python notebooks/export_eda.py"
         )
 
+    st.divider()
+    st.subheader("📓 Jupyter ноутбуки")
+
+    notebook_col1, notebook_col2 = st.columns(2)
+
+    with notebook_col1:
+        st.markdown("**EDA ноутбук**")
+        st.caption("Исходный анализ данных с графиками")
+        st.code("jupyter notebook notebooks/eda.ipynb", language="bash")
+
+    with notebook_col2:
+        st.markdown("**AL эксперимент**")
+        st.caption("Сравнение стратегий Active Learning")
+        st.code(
+            "jupyter notebook notebooks/al_experiment.ipynb",
+            language="bash",
+        )
+
+    st.info(
+        "💡 Запустите команду в терминале из папки проекта. "
+        "Ноутбуки откроются в браузере автоматически."
+    )
+
     st.subheader("📋 Сформировать отчёт")
     section_col1, section_col2 = st.columns(2)
     with section_col1:

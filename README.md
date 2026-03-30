@@ -102,10 +102,15 @@ Streamlit is the UI layer for HITL review, analytics, reporting, and chat with p
 
 ### 🤖 Multi-agent pipeline
 - **DataCollectionAgent** — сбор из нескольких источников: HuggingFace datasets, StackExchange API, RSS-ленты и форумы
-- **DataQualityAgent** — автоматическая чистка: HTML-артефакты, дубликаты, фильтрация коротких текстов
+- **DataQualityAgent** — автоматическая чистка: HTML-артефакты, дубликаты, fuzzy matching и фильтрация коротких текстов
 - **AnnotationAgent** — zero-shot авторазметка (`facebook/bart-large-mnli`) + confidence scoring + review queue
 - **ActiveLearningAgent** — стратегии `entropy`, `margin`, `random` + learning curve и сравнение стратегий
 - **ModelWrapper** — sklearn harness для `fit/predict/evaluate/explain/save/load`
+
+### 🔍 Smart deduplication
+- Exact deduplication by normalized text
+- **Fuzzy matching** (`rapidfuzz`) — finds near-duplicates with >90% similarity, not just exact matches
+- Catches variants like `Sailing in bad weather` vs `Sailing in bad weather!` that exact match misses
 
 ### 🧠 LLM-powered (Gemini)
 - Переформулировка темы пользователя в ML-постановку с классами и ключевыми словами
@@ -137,6 +142,10 @@ Streamlit is the UI layer for HITL review, analytics, reporting, and chat with p
 - `skip_hitl` и `skip_al` позволяют пропускать тяжёлые шаги
 - `ContextMemory` сохраняет результаты каждого этапа
 - Graceful degradation не даёт пайплайну падать из-за внешних зависимостей
+
+## Pipeline Steps
+
+- [x] Step 2.1: DataQualityAgent — HTML cleanup, dedup, **fuzzy matching**, filtering
 
 ## Reports
 

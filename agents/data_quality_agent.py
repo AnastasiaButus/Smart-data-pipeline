@@ -23,6 +23,7 @@ class DataQualityAgent:
         "html_entities": "decode",
         "html_artifacts": "remove",
         "duplicates": "drop",
+        "fuzzy_duplicates": "remove",
         "short_texts": "filter",
         "long_texts": "truncate",
         "missing": "drop",
@@ -50,6 +51,7 @@ class DataQualityAgent:
         self._thresholds = self._quality_cfg.get("thresholds", {}) or {}
         self._short_text_min = int(self._thresholds.get("short_text_min", 50))
         self._long_text_max = int(self._thresholds.get("long_text_max", 1000))
+        self._fuzzy_threshold = float(self._quality_cfg.get("fuzzy_threshold", 90.0))
         self._artifact_patterns = [
             str(pattern).strip().lower()
             for pattern in self._quality_cfg.get(
@@ -104,6 +106,10 @@ class DataQualityAgent:
             regex=True,
             na=False,
         )
+        fuzzy_result = self.find_fuzzy_duplicates(
+            working_df,
+            threshold=self._fuzzy_threshold,
+        )
 
         artifact_hits = sorted(
             {
@@ -129,6 +135,10 @@ class DataQualityAgent:
             "duplicates": {
                 "count": duplicates_count,
                 "pct": self._pct(duplicates_count, total_rows),
+            },
+            "fuzzy_duplicates": {
+                "pairs": int(fuzzy_result.get("fuzzy_duplicate_pairs", 0)),
+                "threshold": float(fuzzy_result.get("threshold", self._fuzzy_threshold)),
             },
             "short_texts": {
                 "count": int(short_mask.sum()),
@@ -161,6 +171,7 @@ class DataQualityAgent:
                 [
                     missing_count > 0,
                     duplicates_count > 0,
+                    int(fuzzy_result.get("fuzzy_duplicate_pairs", 0)) > 0,
                     int(short_mask.sum()) > 0,
                     int(long_mask.sum()) > 0,
                     int(html_mask.sum()) > 0,
@@ -197,6 +208,22 @@ class DataQualityAgent:
         if strategy.get("duplicates", "drop") == "drop":
             dedup_key = working_df["text"].map(self._normalize_for_dedup)
             working_df = working_df.loc[~dedup_key.duplicated(keep="first")].copy()
+
+        if strategy.get("fuzzy_duplicates", "remove") == "remove" and not working_df.empty:
+            fuzzy_result = self.find_fuzzy_duplicates(
+                working_df.reset_index(drop=True),
+                threshold=self._fuzzy_threshold,
+            )
+            indices_to_drop = {
+                int(pair["idx_2"])
+                for pair in fuzzy_result.get("_pairs_raw", [])
+            }
+            if indices_to_drop:
+                working_df = working_df.drop(
+                    index=working_df.index[list(sorted(indices_to_drop))],
+                    errors="ignore",
+                ).copy()
+                logger.info("Removed {} fuzzy duplicates", len(indices_to_drop))
 
         short_strategy = strategy.get("short_texts", "filter")
         if short_strategy == "filter":
@@ -246,6 +273,8 @@ class DataQualityAgent:
                 "short_texts_after": after_report["short_texts"]["count"],
                 "duplicates_before": before_report["duplicates"]["count"],
                 "duplicates_after": after_report["duplicates"]["count"],
+                "fuzzy_duplicates_before": before_report["fuzzy_duplicates"]["pairs"],
+                "fuzzy_duplicates_after": after_report["fuzzy_duplicates"]["pairs"],
                 "avg_len_before": round(float(self._prepare_dataframe(df_before)["text"].str.len().mean()), 2)
                 if rows_before
                 else 0.0,
@@ -329,6 +358,13 @@ class DataQualityAgent:
                 - compare["improvements"]["duplicates_after"],
             ),
             (
+                "Fuzzy duplicate pairs",
+                compare["improvements"]["fuzzy_duplicates_before"],
+                compare["improvements"]["fuzzy_duplicates_after"],
+                compare["improvements"]["fuzzy_duplicates_before"]
+                - compare["improvements"]["fuzzy_duplicates_after"],
+            ),
+            (
                 "Average text length",
                 compare["improvements"]["avg_len_before"],
                 compare["improvements"]["avg_len_after"],
@@ -362,6 +398,7 @@ class DataQualityAgent:
                 "## Issue Details",
                 f"- Missing values: {report['missing_values']['count']} ({', '.join(report['missing_values']['columns']) or 'none'})",
                 f"- HTML artifact rows: {report['html_artifacts']['count']}",
+                f"- Fuzzy duplicate pairs: {report['fuzzy_duplicates']['pairs']}",
                 f"- Class distribution: {json.dumps(report['class_imbalance']['distribution'], ensure_ascii=False)}",
             ]
         )
@@ -399,6 +436,50 @@ class DataQualityAgent:
     def summary(self) -> dict[str, Any]:
         """Return a compact summary suitable for later LLM steps."""
         return dict(self._last_summary)
+
+    def find_fuzzy_duplicates(
+        self,
+        df: pd.DataFrame,
+        threshold: float = 90.0,
+    ) -> dict[str, Any]:
+        """Find near-duplicate text pairs using fuzzy similarity."""
+        from rapidfuzz import fuzz
+
+        working_df = self._prepare_dataframe(df)
+        texts = working_df["text"].fillna("").astype(str).tolist()
+        duplicates: list[dict[str, Any]] = []
+        raw_pairs: list[dict[str, Any]] = []
+
+        logger.info("Fuzzy matching {} texts, threshold={}% ", len(texts), threshold)
+
+        for i, text in enumerate(texts):
+            if i % 100 == 0:
+                logger.info("Fuzzy progress: {}/{}", i, len(texts))
+            if not text.strip():
+                continue
+            for j in range(i + 1, min(i + 50, len(texts))):
+                compare_text = texts[j]
+                if not compare_text.strip():
+                    continue
+                score = float(fuzz.ratio(text, compare_text))
+                if score >= threshold:
+                    pair = {
+                        "idx_1": int(i),
+                        "idx_2": int(j),
+                        "text_1": text[:100],
+                        "text_2": compare_text[:100],
+                        "similarity": round(score, 2),
+                    }
+                    duplicates.append(pair)
+                    raw_pairs.append(pair)
+
+        logger.info("Found {} fuzzy duplicate pairs", len(duplicates))
+        return {
+            "fuzzy_duplicate_pairs": len(duplicates),
+            "threshold": float(threshold),
+            "examples": duplicates[:5],
+            "_pairs_raw": raw_pairs,
+        }
 
     def run(self, df: pd.DataFrame | None = None) -> pd.DataFrame:
         """Execute detection, cleaning, comparison, reporting, and memory update."""

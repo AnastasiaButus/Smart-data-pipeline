@@ -125,18 +125,21 @@ quality:
     html_entities: decode
     html_artifacts: remove
     duplicates: drop
+    fuzzy_duplicates: remove
     short_texts: filter
     long_texts: truncate
     missing: drop
   thresholds:
     short_text_min: 50
     long_text_max: 1000
+  fuzzy_threshold: 90.0
   html_artifact_patterns:
   - wp
   - timeincuk
   - inspirewp
   - keyassets
   - figcaption
+  - attachment
   - webfeedsfeaturedvisual
 pipeline:
   orchestrator: prefect

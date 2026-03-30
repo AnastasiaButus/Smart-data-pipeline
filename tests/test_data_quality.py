@@ -63,11 +63,13 @@ def _write_config(base_dir: Path) -> Path:
                 "html_entities": "decode",
                 "html_artifacts": "remove",
                 "duplicates": "drop",
+                "fuzzy_duplicates": "remove",
                 "short_texts": "filter",
                 "long_texts": "truncate",
                 "missing": "drop",
             },
             "thresholds": {"short_text_min": 50, "long_text_max": 1000},
+            "fuzzy_threshold": 90.0,
             "html_artifact_patterns": [
                 "wp",
                 "timeincuk",
@@ -243,6 +245,7 @@ def test_fix_drops_duplicates(temp_project: Path) -> None:
             "html_entities": "keep",
             "html_artifacts": "keep",
             "duplicates": "drop",
+            "fuzzy_duplicates": "keep",
             "short_texts": "keep",
             "long_texts": "keep",
             "missing": "fill",
@@ -268,6 +271,7 @@ def test_fix_filters_short_texts(temp_project: Path) -> None:
             "html_entities": "keep",
             "html_artifacts": "keep",
             "duplicates": "keep",
+            "fuzzy_duplicates": "keep",
             "short_texts": "filter",
             "long_texts": "keep",
             "missing": "fill",
@@ -294,6 +298,7 @@ def test_fix_truncates_long_texts(temp_project: Path) -> None:
             "html_entities": "keep",
             "html_artifacts": "keep",
             "duplicates": "keep",
+            "fuzzy_duplicates": "keep",
             "short_texts": "keep",
             "long_texts": "truncate",
             "missing": "fill",
@@ -437,3 +442,53 @@ def test_explain_issues_saves_json(
     agent.explain_issues(quality_report)
 
     assert (temp_project / "reports" / "llm_quality_advice.json").exists()
+
+
+def test_fuzzy_duplicates_finds_similar(temp_project: Path) -> None:
+    """Fuzzy matching should find near-duplicate sailing texts over the threshold."""
+    agent = _make_agent(temp_project)
+    df = pd.DataFrame(
+        {
+            "text": [
+                "Sailing in bad weather requires careful route planning and safety checks.",
+                "Sailing in bad weather requires careful route planning and safety checks!",
+                "Anchoring tips for quiet bays and overnight stays.",
+            ],
+            "label": ["unlabeled", "unlabeled", "unlabeled"],
+        }
+    )
+
+    result = agent.find_fuzzy_duplicates(df, threshold=90.0)
+
+    assert result["fuzzy_duplicate_pairs"] >= 1
+    assert result["examples"]
+
+
+def test_fix_removes_fuzzy_duplicates(temp_project: Path) -> None:
+    """Near-duplicate rows should be removed when fuzzy_duplicates=remove."""
+    agent = _make_agent(temp_project)
+    df = pd.DataFrame(
+        {
+            "text": [
+                "Sailing in bad weather requires careful route planning and safety checks.",
+                "Sailing in bad weather requires careful route planning and safety checks!",
+                "Anchoring tips for quiet bays and overnight stays with enough context.",
+            ],
+            "label": ["unlabeled", "unlabeled", "unlabeled"],
+        }
+    )
+
+    cleaned = agent.fix(
+        df,
+        {
+            "html_entities": "keep",
+            "html_artifacts": "keep",
+            "duplicates": "keep",
+            "fuzzy_duplicates": "remove",
+            "short_texts": "keep",
+            "long_texts": "keep",
+            "missing": "fill",
+        },
+    )
+
+    assert len(cleaned) == 2

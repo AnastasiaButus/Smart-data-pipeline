@@ -14,6 +14,7 @@ feedparser>=6.0.0
 
 # Data quality
 scipy>=1.11.0
+rapidfuzz>=3.0.0
 
 # Annotation
 transformers>=4.35.0
