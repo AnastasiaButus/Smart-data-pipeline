@@ -584,6 +584,36 @@ class GeminiLLMClient:
             logger.error("EDA hypotheses generation failed: {}. Using fallback.", exc)
             return fallback
 
+    def generate_stopwords(self, topic: str, base_stopwords: set[str]) -> set[str]:
+        """Generate custom WordCloud stopwords for a topic or fall back to the base set."""
+        prompt = (
+            f'Topic: "{topic}"\n'
+            "Generate 20 stopwords to exclude from WordCloud for this topic.\n"
+            "These should be: common words for this domain that are too\n"
+            "frequent to be informative, plus generic web/HTML artifacts.\n"
+            'Return JSON only: {"stopwords": ["word1", "word2", ...]}\n'
+            "Max 20 words, lowercase, no punctuation."
+        )
+
+        try:
+            result = self.generate_json(prompt[:600])
+            llm_words = {
+                cleaned
+                for word in result.get("stopwords", [])
+                for cleaned in [re.sub(r"[^a-z0-9_-]", "", str(word).lower()).strip()]
+                if cleaned
+            }
+
+            if llm_words:
+                logger.info("LLM stopwords generated: {}", sorted(llm_words))
+                return set(base_stopwords) | llm_words
+
+            logger.warning("LLM stopwords fallback to base set")
+            return set(base_stopwords)
+        except Exception as exc:
+            logger.warning("LLM stopwords fallback to base set: {}", exc)
+            return set(base_stopwords)
+
     def generate(self, prompt: str) -> str:
         """Generate raw text with retry logic and model fallback chain."""
         client = self._get_client()

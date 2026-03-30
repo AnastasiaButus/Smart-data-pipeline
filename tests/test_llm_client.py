@@ -439,3 +439,40 @@ def test_generate_eda_hypotheses_fallback(
 
     assert isinstance(hypotheses, list)
     assert len(hypotheses) == 5
+
+
+def test_generate_stopwords_returns_set(
+    temp_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """LLM stopwords should merge parsed Gemini words with the base set."""
+    client = GeminiLLMClient(config_path=str(temp_project / "config.yaml"))
+    base_stopwords = {"href", "html", "content"}
+    monkeypatch.setattr(
+        client,
+        "generate_json",
+        lambda prompt: {"stopwords": ["sail", "boat"]},
+    )
+
+    stopwords = client.generate_stopwords("sailing and yacht navigation", base_stopwords)
+
+    assert isinstance(stopwords, set)
+    assert "sail" in stopwords
+    assert "boat" in stopwords
+    assert base_stopwords.issubset(stopwords)
+
+
+def test_generate_stopwords_fallback(
+    temp_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stopwords generation should fall back to the base set when Gemini fails."""
+    client = GeminiLLMClient(config_path=str(temp_project / "config.yaml"))
+    base_stopwords = {"href", "html", "content"}
+
+    def _raise(_: str) -> dict[str, list[str]]:
+        raise Exception("gemini stopwords failed")
+
+    monkeypatch.setattr(client, "generate_json", _raise)
+
+    stopwords = client.generate_stopwords("sailing and yacht navigation", base_stopwords)
+
+    assert stopwords == base_stopwords

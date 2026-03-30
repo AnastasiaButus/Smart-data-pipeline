@@ -27,6 +27,11 @@ def test_export_eda_runs_without_error(monkeypatch) -> None:
     """EDA export should run and create a sizable HTML report."""
     monkeypatch.setattr(
         export_eda.GeminiLLMClient,
+        "generate_stopwords",
+        lambda self, topic, base_stopwords: set(base_stopwords),
+    )
+    monkeypatch.setattr(
+        export_eda.GeminiLLMClient,
         "generate_eda_hypotheses",
         lambda self, dataset_summary: _mock_hypotheses(),
     )
@@ -41,6 +46,11 @@ def test_wordcloud_files_created(monkeypatch) -> None:
     """WordCloud export should create both expected PNG files."""
     monkeypatch.setattr(
         export_eda.GeminiLLMClient,
+        "generate_stopwords",
+        lambda self, topic, base_stopwords: set(base_stopwords),
+    )
+    monkeypatch.setattr(
+        export_eda.GeminiLLMClient,
         "generate_eda_hypotheses",
         lambda self, dataset_summary: _mock_hypotheses(),
     )
@@ -53,6 +63,11 @@ def test_wordcloud_files_created(monkeypatch) -> None:
 
 def test_hypotheses_json_created(monkeypatch) -> None:
     """EDA export should persist hypotheses JSON locally."""
+    monkeypatch.setattr(
+        export_eda.GeminiLLMClient,
+        "generate_stopwords",
+        lambda self, topic, base_stopwords: set(base_stopwords),
+    )
     monkeypatch.setattr(
         export_eda.GeminiLLMClient,
         "generate_eda_hypotheses",
