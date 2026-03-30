@@ -1,0 +1,56 @@
+project:
+  name: smart-data-pipeline
+  version: "0.1.0"
+  description: "Configurable text classification pipeline"
+
+domain:
+  topic: "sailing and yacht navigation"
+  classes:
+    - navigation
+    - safety
+    - equipment
+    - weather
+    - licensing
+  language: "en"
+
+sources:
+  reddit:
+    subreddits: ["sailing", "AskSailing", "Yachting"]
+    limit: 500
+    enabled: true
+  huggingface:
+    dataset_name: "dair-ai/emotion"
+    split: "train"
+    enabled: true
+  scraping:
+    urls: []
+    enabled: false
+
+data:
+  raw_path: "data/raw"
+  labeled_path: "data/labeled"
+  review_queue_path: "data/review_queue.csv"
+
+annotation:
+  confidence_threshold: 0.7
+  model: "zero-shot"
+
+active_learning:
+  strategy: "entropy"
+  initial_size: 50
+  batch_size: 20
+  n_iterations: 5
+
+model:
+  type: "sklearn"
+  base_model: "logistic_regression"
+
+llm:
+  provider: "gemini"
+  model: "gemini-1.5-flash"
+  max_tokens: 1000
+  temperature: 0.3
+
+pipeline:
+  orchestrator: "prefect"
+  save_intermediate: true
