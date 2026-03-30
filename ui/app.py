@@ -1119,6 +1119,317 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
             st.rerun()
 
 
+PERMISSION_LABELS = {
+    "low": "✅ Свободно",
+    "medium": "⚠️ С оговорками",
+    "high": "🚫 Ограничено",
+    "✅ Свободно": "✅ Свободно",
+    "⚠️ С оговорками": "⚠️ С оговорками",
+    "🚫 Ограничено": "🚫 Ограничено",
+}
+
+
+def normalize_source_suggestions(sources_data: list[Any]) -> pd.DataFrame:
+    """Normalize heterogeneous source payloads into one stable onboarding schema."""
+    normalized: list[dict[str, Any]] = []
+    for source in sources_data:
+        payload = source if isinstance(source, dict) else {}
+        normalized.append(
+            {
+                "Источник": payload.get("name")
+                or payload.get("source")
+                or payload.get("title")
+                or str(source),
+                "Тип": payload.get("type")
+                or payload.get("source_type")
+                or "—",
+                "Лицензия": payload.get("license")
+                or payload.get("license_type")
+                or "—",
+                "Строк (ориентир)": payload.get("estimated_rows")
+                or payload.get("rows")
+                or "~100-500",
+                "Уровень разрешения": PERMISSION_LABELS.get(
+                    payload.get("risk_level") or payload.get("risk") or "medium",
+                    "⚠️ С оговорками",
+                ),
+            }
+        )
+
+    if not normalized:
+        normalized = [
+            {
+                "Источник": "StackExchange / форумы",
+                "Тип": "API/форум",
+                "Лицензия": "CC BY-SA 4.0",
+                "Строк (ориентир)": "~100-200",
+                "Уровень разрешения": "✅ Свободно",
+            },
+            {
+                "Источник": "RSS отраслевых медиа",
+                "Тип": "RSS",
+                "Лицензия": "editorial use",
+                "Строк (ориентир)": "~50-100",
+                "Уровень разрешения": "⚠️ С оговорками",
+            },
+            {
+                "Источник": "HuggingFace datasets",
+                "Тип": "dataset",
+                "Лицензия": "depends on dataset",
+                "Строк (ориентир)": "~300-500",
+                "Уровень разрешения": "✅ Свободно",
+            },
+        ]
+
+    return pd.DataFrame(normalized)
+
+
+def build_sources_detail(sources_data: list[Any]) -> dict[str, Any]:
+    """Build detailed onboarding source groups with expanders and links."""
+    details: dict[str, Any] = {
+        "StackExchange / форумы": {
+            "description": "Q&A форумы по теме",
+            "license": "CC BY-SA 4.0",
+            "risk": "✅ Свободно",
+            "items": [
+                {
+                    "name": "sailing.stackexchange.com",
+                    "url": "https://sailing.stackexchange.com",
+                    "rows": 98,
+                    "enabled": True,
+                },
+                {
+                    "name": "outdoors.stackexchange.com",
+                    "url": "https://outdoors.stackexchange.com",
+                    "rows": 50,
+                    "enabled": False,
+                },
+            ],
+        },
+        "HuggingFace datasets": {
+            "description": "Открытые ML датасеты",
+            "license": "зависит от датасета",
+            "risk": "✅ Свободно",
+            "items": [
+                {
+                    "name": "dair-ai/emotion",
+                    "url": "https://huggingface.co/datasets/dair-ai/emotion",
+                    "rows": 300,
+                    "enabled": True,
+                },
+                {
+                    "name": "mteb/tweet_sentiment_extraction",
+                    "url": "https://huggingface.co/datasets/mteb/tweet_sentiment_extraction",
+                    "rows": 300,
+                    "enabled": True,
+                },
+            ],
+        },
+        "RSS отраслевых медиа": {
+            "description": "Новости яхтинга и парусного спорта",
+            "license": "editorial use",
+            "risk": "⚠️ С оговорками",
+            "items": [
+                {
+                    "name": "Yachting World",
+                    "url": "https://www.yachtingworld.com/feed",
+                    "rows": 30,
+                    "enabled": True,
+                },
+                {
+                    "name": "Cruising World",
+                    "url": "https://www.cruisingworld.com/feed/",
+                    "rows": 10,
+                    "enabled": True,
+                },
+                {
+                    "name": "Sail Magazine",
+                    "url": "https://www.sailmagazine.com/feed",
+                    "rows": 10,
+                    "enabled": True,
+                },
+                {
+                    "name": "48° North",
+                    "url": "https://www.48north.com/feed/",
+                    "rows": 10,
+                    "enabled": True,
+                },
+            ],
+        },
+        "Форумы": {
+            "description": "Тематические форумы яхтсменов",
+            "license": "robots.txt checked",
+            "risk": "⚠️ С оговорками",
+            "items": [
+                {
+                    "name": "Sailing Forums",
+                    "url": "https://www.sailingforums.com",
+                    "rows": 20,
+                    "enabled": True,
+                }
+            ],
+        },
+    }
+
+    normalized = normalize_source_suggestions(sources_data)
+    known_names = set(details.keys())
+    extras = normalized.loc[~normalized["Источник"].isin(known_names)].copy()
+    if not extras.empty:
+        details["Дополнительные LLM-источники"] = {
+            "description": "Дополнительные источники, предложенные Gemini",
+            "license": "зависит от источника",
+            "risk": "⚠️ С оговорками",
+            "items": [
+                {
+                    "name": str(row["Источник"]),
+                    "url": "#",
+                    "rows": row["Строк (ориентир)"],
+                    "enabled": True,
+                }
+                for _, row in extras.iterrows()
+            ],
+        }
+
+    return details
+
+
+def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
+    """Render onboarding flow for topic and source discovery."""
+    st.title("⛵ Smart Data Pipeline")
+
+    if st.session_state.get("topic") and not st.session_state.get("editing_topic", False):
+        st.subheader("Текущая конфигурация домена")
+        st.write(f"**Тема:** {st.session_state.get('topic')}")
+        st.write("**Классы:** " + ", ".join(st.session_state.get("current_classes", [])))
+        if st.button("Изменить тему", key="change_topic_button"):
+            st.session_state["editing_topic"] = True
+            st.rerun()
+        if st.session_state.get("selected_sources"):
+            st.success(
+                "Выбраны источники: "
+                + ", ".join(st.session_state.get("selected_sources", []))
+            )
+        return
+
+    st.subheader("Введите тему для классификации текстов")
+    topic = st.text_input(
+        "Тема пользователя",
+        value=st.session_state.get("topic", ""),
+        key="onboarding_topic_input",
+    ).strip()
+    if topic:
+        st.session_state["topic"] = topic
+
+    if "selected_items" not in st.session_state:
+        st.session_state["selected_items"] = {}
+
+    if st.button("🔍 Найти источники данных", key="find_sources_button"):
+        with st.spinner("Gemini ищет источники..."):
+            suggestion_payload = find_sources_with_llm(topic, llm_client)
+        st.session_state["source_suggestions"] = suggestion_payload.get("sources", [])
+        if suggestion_payload.get("suggested_classes"):
+            st.session_state["current_classes"] = [
+                str(item).strip()
+                for item in suggestion_payload.get("suggested_classes", [])
+                if str(item).strip()
+            ]
+
+    suggestions = st.session_state.get("source_suggestions", [])
+    if suggestions:
+        df_sources = normalize_source_suggestions(suggestions)
+        st.dataframe(df_sources, use_container_width=True, hide_index=True)
+        st.caption(
+            "✅ Свободно — официальный API или открытая лицензия  |  "
+            "⚠️ С оговорками — robots.txt разрешает, лицензия неявная  |  "
+            "🚫 Ограничено — запрещено ToS или robots.txt"
+        )
+
+        sources_detail = build_sources_detail(suggestions)
+        if len(sources_detail) > 5:
+            # TODO: пагинация при большом количестве дополнительных источников
+            pass
+
+        st.markdown("### 📦 Доступные источники данных")
+        st.caption("Раскройте каждый источник чтобы выбрать конкретные датасеты и сайты")
+
+        total_selected = 0
+        total_rows = 0
+        selected_labels: list[str] = []
+
+        for source_name, source_data in sources_detail.items():
+            risk_icon = {
+                "✅ Свободно": "✅",
+                "⚠️ С оговорками": "⚠️",
+                "🚫 Ограничено": "🚫",
+            }.get(source_data["risk"], "⚪")
+
+            with st.expander(
+                f"{risk_icon} **{source_name}** — {source_data['license']}"
+            ):
+                st.caption(source_data["description"])
+
+                for item in source_data["items"]:
+                    item_key = f"{source_name}_{item['name']}"
+                    if item_key not in st.session_state["selected_items"]:
+                        st.session_state["selected_items"][item_key] = bool(
+                            item.get("enabled", True)
+                        )
+
+                    col1, col2, col3 = st.columns([3, 1, 1])
+                    with col1:
+                        checked = st.checkbox(
+                            item["name"],
+                            value=st.session_state["selected_items"][item_key],
+                            key=f"cb_{item_key}",
+                        )
+                        st.session_state["selected_items"][item_key] = checked
+                    with col2:
+                        st.caption(f"~{item['rows']} строк")
+                    with col3:
+                        item_url = str(item.get("url", "")).strip()
+                        if item_url and item_url != "#":
+                            st.link_button("🔗", item_url, help="Открыть источник")
+                        else:
+                            st.caption("—")
+
+                    if checked:
+                        total_selected += 1
+                        try:
+                            total_rows += int(item["rows"])
+                        except Exception:
+                            pass
+                        selected_labels.append(f"{source_name} / {item['name']}")
+
+        st.divider()
+        metric_col1, metric_col2 = st.columns(2)
+        metric_col1.metric("Выбрано источников", total_selected)
+        metric_col2.metric("Ожидаемых строк", f"~{total_rows}")
+
+        if st.button("✅ Использовать выбранные источники", type="primary", key="confirm_source_selection"):
+            selected = {
+                key: value
+                for key, value in st.session_state["selected_items"].items()
+                if value
+            }
+            st.session_state["confirmed_sources"] = selected
+            st.session_state["selected_sources"] = selected_labels
+            st.session_state["editing_topic"] = False
+            cfg_data = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+            sources_cfg = cfg_data.setdefault("sources", {})
+            sources_cfg["selected"] = selected_labels
+            CONFIG_PATH.write_text(
+                yaml.safe_dump(
+                    cfg_data,
+                    allow_unicode=True,
+                    default_flow_style=False,
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+            st.success(f"Сохранено {len(selected)} источников!")
+            st.rerun()
+
+
 def main() -> None:
     """Run the Streamlit HITL dashboard."""
     init_state()
