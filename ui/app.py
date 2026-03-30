@@ -712,18 +712,30 @@ def render_analytics_tab(threshold: float) -> None:
 
     st.dataframe(pd.DataFrame(LICENSE_ROWS), use_container_width=True, hide_index=True)
 
+    st.markdown("---")
+    st.markdown("**📊 Расширенный интерактивный EDA отчёт**")
+    st.caption(
+        "Полный отчёт с 8 графиками (zoom, hover, pan), "
+        "WordCloud и LLM-гипотезами. "
+        "Скачайте и откройте в браузере — "
+        "работает без интернета."
+    )
+
     eda_path = pathlib.Path("reports/eda_report.html")
     if eda_path.exists():
         with open(eda_path, "rb") as report_file:
             st.download_button(
-                label="📊 Скачать EDA отчёт (HTML)",
+                label="⬇️ Скачать EDA отчёт (HTML, интерактивный)",
                 data=report_file.read(),
                 file_name="eda_report.html",
                 mime="text/html",
+                help="После скачивания откройте файл в Chrome/Firefox для просмотра",
             )
-        st.info("💡 Для просмотра: откройте файл в браузере после скачивания")
     else:
-        st.warning("EDA отчёт не найден. Запустите: python notebooks/export_eda.py")
+        st.warning(
+            "EDA отчёт не найден. "
+            "Запустите: python notebooks/export_eda.py"
+        )
 
     st.subheader("📋 Сформировать отчёт")
     section_col1, section_col2 = st.columns(2)

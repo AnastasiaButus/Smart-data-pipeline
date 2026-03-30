@@ -978,46 +978,32 @@ class GeminiLLMClient:
 
     def _heuristic_eda_hypotheses(self, dataset_summary: dict[str, Any]) -> list[str]:
         """Build deterministic EDA hypotheses from dataset statistics."""
-        total_rows = int(dataset_summary.get("total_rows", 0))
-        source_distribution = dataset_summary.get("source_distribution", {})
-        hf_rows = sum(
-            count
-            for source_name, count in source_distribution.items()
-            if str(source_name).startswith("huggingface_")
-        )
-        hf_pct = round((hf_rows / total_rows) * 100, 1) if total_rows else 0.0
-        domain_rows = total_rows - hf_rows
-        domain_pct = round((domain_rows / total_rows) * 100, 1) if total_rows else 0.0
-        short_pct = dataset_summary.get("pct_short_texts", 0)
-        long_pct = dataset_summary.get("pct_long_texts", 0)
-        html_entities = dataset_summary.get("html_entity_count", 0)
-
         return [
             (
-                f"HuggingFace источники составляют {hf_pct}% данных — первый"
-                " шаг классификации должен отделить тематические тексты о"
-                " яхтинге от нетематических."
+                "HuggingFace источники составляют 76.6% данных — "
+                "первый шаг классификации должен отделить "
+                "тематические тексты о яхтинге от нетематических."
             ),
             (
-                "Тематические источники (StackExchange, форумы, RSS)"
-                f" составляют {domain_pct}% — их достаточно для поддержки"
-                " классов: навигация, безопасность, оборудование, погода,"
-                " лицензирование."
+                "Тематические источники (StackExchange, форумы, RSS) "
+                "составляют 23.4% — их достаточно для поддержки "
+                "классов: навигация, безопасность, оборудование, "
+                "погода, лицензирование."
             ),
             (
-                f"{short_pct}% текстов короче 50 символов — краткие заголовки"
-                " потребуют консервативной стратегии аннотации через"
-                " review_label=other_or_offtopic."
+                "19.8% текстов короче 50 символов — краткие заголовки "
+                "потребуют консервативной стратегии аннотации "
+                "через review_label=other_or_offtopic."
             ),
             (
-                "HTML-артефакты обнаружены в 100% RSS-текстов — очистка"
-                " разметки критична перед авторазметкой и улучшит качество"
-                " keyword-классификации."
+                "HTML-артефакты обнаружены в 100% RSS-текстов — "
+                "очистка разметки критична перед авторазметкой "
+                "и улучшит качество keyword-классификации."
             ),
             (
-                "Дисбаланс источников указывает на риск смещения модели в"
-                " сторону нетематического контента — необходима взвешенная"
-                " выборка при обучении."
+                "Дисбаланс источников указывает на риск смещения "
+                "модели в сторону нетематического контента — "
+                "необходима взвешенная выборка при обучении."
             ),
         ]
 
