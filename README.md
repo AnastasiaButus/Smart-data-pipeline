@@ -1,6 +1,6 @@
 # smart-data-pipeline
 ![WIP](https://img.shields.io/badge/status-WIP-yellow)
-![Tests](https://img.shields.io/badge/tests-87%20passed-green)
+![Tests](https://img.shields.io/badge/tests-97%20passed-green)
 ![Streamlit](https://img.shields.io/badge/UI-Streamlit-red)
 ![HITL](https://img.shields.io/badge/HITL-%E2%9C%93-brightgreen)
 ![LLM](https://img.shields.io/badge/LLM-Gemini-orange)
@@ -49,6 +49,8 @@ Edit `.env` with your API keys, then edit `config.yaml` to set your classificati
 - [x] Step 3.1: AnnotationAgent - zero-shot, confidence scoring, review_queue.csv (HITL ★)
 - [x] Step 3.2: Streamlit HITL dashboard - 4 tabs + report builder + Telegram export
 - [x] Step 4.1: ActiveLearningAgent - entropy/margin/random + learning curve
+- [x] Step 5.1: ModelWrapper - predict/evaluate/explain/save/load + sklearn baseline
+- [x] Step 5.2: sklearn baseline trained - accuracy=0.50, F1=0.43
 
 ## Reports
 | Report | Description |
@@ -59,6 +61,8 @@ Edit `.env` with your API keys, then edit `config.yaml` to set your classificati
 | reports/wordcloud_all.png | WordCloud full corpus |
 | reports/wordcloud_domain.png | WordCloud domain sources only |
 | reports/quality_report.md | Before/after quality cleanup summary |
+| models/classifier.pkl | Trained sklearn model |
+| reports/model_metrics.json | Model evaluation metrics |
 
 ## What it looks like
 
