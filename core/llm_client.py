@@ -624,6 +624,7 @@ class GeminiLLMClient:
         self,
         prompt: str,
         use_pipeline_context: bool = True,
+        model_names: list[str] | None = None,
     ) -> str:
         """Generate raw text with retry logic and model fallback chain."""
         client = self._get_client()
@@ -637,10 +638,11 @@ class GeminiLLMClient:
         prompt = full_prompt[: min(self._max_prompt_chars, 800)]
         types = importlib.import_module("google.genai.types")
         last_error = ""
+        models_to_try = model_names or list(self._fallback_models)
 
         for attempt in range(3):
             retriable_seen = False
-            for model_name in self._fallback_models:
+            for model_name in models_to_try:
                 try:
                     response = client.models.generate_content(
                         model=model_name,
@@ -671,6 +673,12 @@ class GeminiLLMClient:
                             exc,
                         )
                         continue
+                    if (
+                        ("400" in last_error or "INVALID_ARGUMENT" in last_error.upper())
+                        and "gemma" in model_name.lower()
+                    ):
+                        logger.warning("Model {} skipped: {}", model_name, exc)
+                        continue
                     logger.error(
                         "Model {} failed with non-retriable error: {}",
                         model_name,
@@ -690,7 +698,15 @@ class GeminiLLMClient:
 
     def generate_json(self, prompt: str) -> dict[str, Any]:
         """Generate JSON and recover from common formatting noise."""
-        raw_text = self.generate(prompt).strip()
+        json_capable_models = [
+            model_name
+            for model_name in self._fallback_models
+            if "gemma" not in model_name.lower()
+        ]
+        raw_text = self.generate(
+            prompt,
+            model_names=json_capable_models or list(self._fallback_models),
+        ).strip()
         if not raw_text:
             return {}
 
