@@ -14,17 +14,34 @@ domain:
   language: "en"
 
 sources:
-  reddit:
-    subreddits: ["sailing", "AskSailing", "Yachting"]
-    limit: 500
-    enabled: true
   huggingface:
-    dataset_name: "dair-ai/emotion"
-    split: "train"
+    datasets:
+      - name: "dair-ai/emotion"
+        split: "train"
+        text_column: "text"
+        limit: 300
+      - name: "mteb/tweet_sentiment_extraction"
+        split: "test"
+        text_column: "text"
+        limit: 300
     enabled: true
+
   scraping:
-    urls: []
-    enabled: false
+    cruisers_forum:
+      base_url: "https://www.cruisersforum.com"
+      sections:
+        - "/forums/f19/"
+        - "/forums/f4/"
+      pages_per_section: 3
+      enabled: true
+    enabled: true
+
+  rss:
+    feeds:
+      - "https://www.sail-world.com/rss/rss.xml"
+      - "https://www.yachtingworld.com/feed"
+      - "https://sailinganarchy.com/feed"
+    enabled: true
 
 data:
   raw_path: "data/raw"
