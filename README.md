@@ -1,141 +1,118 @@
-# smart-data-pipeline
-![WIP](https://img.shields.io/badge/status-WIP-yellow)
-![Tests](https://img.shields.io/badge/tests-97%20passed-green)
+# ⛵ Smart Data Pipeline
+![Tests](https://img.shields.io/badge/tests-102%20passed-green)
 ![Streamlit](https://img.shields.io/badge/UI-Streamlit-red)
 ![HITL](https://img.shields.io/badge/HITL-%E2%9C%93-brightgreen)
 ![LLM](https://img.shields.io/badge/LLM-Gemini-orange)
-![EDA](https://img.shields.io/badge/EDA-interactive-blue)
+![Prefect](https://img.shields.io/badge/orchestrator-Prefect-1f6feb)
 ![Python](https://img.shields.io/badge/python-3.12.6-blue)
 
-An end-to-end educational ML pipeline for domain-driven text classification with data collection, LLM-assisted domain reformulation, and human review.
+> End-to-end ML pipeline for domain-driven text classification. Change one line in
+> `config.yaml` and get a full annotated dataset, trained model, and interactive report
+> for any topic.
 
-## Architecture
-The project is organized around 4 agents: data collection, data quality, annotation, and active learning.
-Prefect is the planned orchestrator for end-to-end pipeline execution and reporting.
-Gemini is used as a separate LLM layer for domain reformulation and compact summary-based class design.
-Streamlit is the UI layer for review and future human-in-the-loop workflows.
-
-## Data Sources
-
-| Source | Type | License/Status |
-| --- | --- | --- |
-| HuggingFace (dair-ai/emotion) | dataset | Apache 2.0 |
-| HuggingFace (mteb/tweet_sentiment_extraction) | dataset | MIT |
-| StackExchange Sailing | API | CC BY-SA 4.0 |
-| Yachting World RSS | RSS scraping | educational use |
-| Sailing Forums | web scraping | robots.txt checked, educational use |
-
-## Setup
-
+## Quick Start
 ```bash
-git clone https://github.com/your-username/smart-data-pipeline.git
+git clone https://github.com/AnastasiaButus/Smart-data-pipeline.git
 cd smart-data-pipeline
 python -m venv .venv
-.venv\Scripts\activate      # Windows
+.venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
+
+# добавить GEMINI_API_KEY в .env
+
+# Запустить весь пайплайн одной командой:
+python pipeline/run_pipeline.py
+
+# Или запустить UI:
+streamlit run ui/app.py
 ```
 
-Edit `.env` with your API keys, then edit `config.yaml` to set your classification topic and classes.
+## Data Card
 
-## Pipeline Steps (completed)
-- [x] Step 0: Project scaffold
-- [x] Step 1.1: DataCollectionAgent - 3 sources, 761 rows
-- [x] Step 1.2: Scraping improvements - StackExchange API, RSS
-- [x] Step 1.3: Gemini LLM - domain reformulation, classes, fallback
-- [x] Step 1.4: EDA - 8 charts, WordCloud, LLM hypotheses
-- [x] Step 2.1: DataQualityAgent - HTML cleanup, dedup, filtering (761 rows -> 609)
-- [x] Step 2.2: DataQualityAgent LLM skill - Gemini explains issues + recommends strategy (+2 bonus)
-- [x] Step 3.1: AnnotationAgent - zero-shot, confidence scoring, review_queue.csv (HITL ★)
-- [x] Step 3.2: Streamlit HITL dashboard - 4 tabs + report builder + Telegram export
-- [x] Step 4.1: ActiveLearningAgent - entropy/margin/random + learning curve
-- [x] Step 5.1: ModelWrapper - predict/evaluate/explain/save/load + sklearn baseline
-- [x] Step 5.2: sklearn baseline trained - accuracy=0.50, F1=0.43
+| Параметр | Значение |
+|----------|----------|
+| Домен | Sailing & yacht navigation |
+| Язык | English |
+| Источников | 8 (HF, StackExchange, RSS, форумы) |
+| Строк собрано | 761 |
+| Строк после чистки | 609 |
+| Тематических строк | 220 (23.4%) |
+| Классов | 5 + other_or_offtopic |
+| Модель | sklearn TF-IDF + LogReg |
+| Accuracy | 0.50 |
+| F1 macro | 0.43 |
+| HITL точек | 1 (`review_queue.csv`) |
+| Тестов | 102 |
 
-## Reports
-| Report | Description |
-|--------|-------------|
-| reports/eda_report.html | Interactive EDA - charts + hypotheses |
-| reports/domain_spec.json | LLM domain specification |
-| reports/domain_reformulation.md | Domain reformulation details |
-| reports/wordcloud_all.png | WordCloud full corpus |
-| reports/wordcloud_domain.png | WordCloud domain sources only |
-| reports/quality_report.md | Before/after quality cleanup summary |
-| models/classifier.pkl | Trained sklearn model |
-| reports/model_metrics.json | Model evaluation metrics |
+## Classes
 
-## What it looks like
+| Класс | Описание | Строк |
+|-------|----------|-------|
+| navigation | Навигация, маршруты, карты | 51 |
+| safety | Безопасность, спасение | 77 |
+| equipment | Оборудование, паруса | 59 |
+| weather | Погода, ветер, море | 24 |
+| licensing | Лицензии, обучение | 9 |
+| other_or_offtopic | Нетематические тексты | 389 |
 
-### EDA Report - интерактивный HTML
+## Architecture
 
-![Dataset overview](docs/screenshots/eda_overview.png)
-![WordCloud](docs/screenshots/eda_wordcloud.png)
-![Data quality](docs/screenshots/eda_quality.png)
-
-### Streamlit Dashboard
-
-> 💡 Скриншоты дашборда будут добавлены
-> после финальной полировки UI
-
-Запуск: `streamlit run ui/app.py`
+The project is organized around 4 agents: data collection, data quality, annotation, and active learning.
+Prefect orchestrates the end-to-end pipeline and provides one-command execution.
+Gemini is used as a separate LLM layer for domain reformulation, EDA hypotheses, and compact advisory tasks.
+Streamlit is the UI layer for HITL review, analytics, reporting, and chat with project context.
 
 ## ✨ Features
 
 ### 🤖 Multi-agent pipeline
-- **DataCollectionAgent** — сбор из 3+ источников: HuggingFace datasets, StackExchange API, RSS-ленты, форумы
+- **DataCollectionAgent** — сбор из нескольких источников: HuggingFace datasets, StackExchange API, RSS-ленты и форумы
 - **DataQualityAgent** — автоматическая чистка: HTML-артефакты, дубликаты, фильтрация коротких текстов
-- **AnnotationAgent** — zero-shot авторазметка (facebook/bart-large-mnli) + confidence scoring
-- **ActiveLearningAgent** — умный отбор примеров (entropy / margin / random стратегии) *(coming soon)*
+- **AnnotationAgent** — zero-shot авторазметка (`facebook/bart-large-mnli`) + confidence scoring + review queue
+- **ActiveLearningAgent** — стратегии `entropy`, `margin`, `random` + learning curve и сравнение стратегий
+- **ModelWrapper** — sklearn harness для `fit/predict/evaluate/explain/save/load`
 
 ### 🧠 LLM-powered (Gemini)
-- Переформулировка темы пользователя → классы + ключевые слова
-- Объяснение проблем качества данных + рекомендации
-- Генерация гипотез после EDA на русском языке
+- Переформулировка темы пользователя в ML-постановку с классами и ключевыми словами
+- Объяснение проблем качества данных и рекомендация стратегии чистки
+- Генерация EDA-гипотез на русском языке
 - Чат с данными прямо в дашборде
-- Fallback chain: gemini-2.5-flash → gemini-flash-latest → gemma
+- Fallback chain: `gemini-2.5-flash -> gemini-flash-latest -> gemma`
 
 ### 👤 Human-in-the-Loop (HITL)
-- Примеры с confidence < порога → очередь на проверку
-- Streamlit интерфейс: принять / исправить метку
+- Примеры с `confidence < threshold` попадают в `review_queue.csv`
+- Streamlit-интерфейс позволяет принять или исправить метку
 - Фильтрация по классу и источнику
-- Сохранение правок + скачивание CSV
+- Сохранение правок и скачивание CSV для ручной проверки
 
 ### 📊 Interactive EDA Report
-- 8 Plotly-графиков (zoom, hover, pan)
-- WordCloud с автоматической фильтрацией HTML-мусора
+- 8 интерактивных Plotly-графиков
+- WordCloud с фильтрацией HTML-мусора
 - LLM-гипотезы на русском языке
-- Сворачиваемые секции
-- Открывается без сервера (один HTML файл)
+- Сворачиваемые секции и export в standalone HTML
 
 ### 📋 Report Builder
 - Пользователь выбирает секции галочками
 - Форматы: HTML / Markdown / Telegram
 - Таблица источников с лицензиями и статусом скрапинга
+- Data Card с полными метриками проекта
 
-### 🔧 Developer-friendly
-- Легко сменить тему: одна строка в config.yaml
-- Все шаги покрыты pytest (75+ тестов)
-- Prefect оркестрация — запуск одной командой
-- Пропуск любого шага с предупреждением о последствиях
+### ⚙️ Orchestration
+- Prefect flow запускает весь pipeline одной командой
+- `skip_hitl` и `skip_al` позволяют пропускать тяжёлые шаги
+- `ContextMemory` сохраняет результаты каждого этапа
+- Graceful degradation не даёт пайплайну падать из-за внешних зависимостей
 
-## How to change the topic
+## Reports
 
-This pipeline works for **any text classification domain**.
-Change one line in `config.yaml`:
-
-```yaml
-domain:
-  topic: "your topic here"  # e.g. "medical diagnosis", "legal documents"
-```
-
-The LLM (Gemini) will automatically:
-- reformulate the topic into precise ML task
-- generate 5-7 classification classes
-- suggest keywords and annotation guidelines
-
-**Example domains tested:**
-- Sailing & yacht navigation *(current demo)*
-- Any domain with forum/RSS/HuggingFace coverage
+| Report | Description |
+|--------|-------------|
+| `reports/domain_reformulation.md` | Детали domain reformulation |
+| `reports/quality_report.md` | Сводка до/после чистки данных |
+| `reports/annotation_spec.md` | Спецификация разметки |
+| `reports/eda_report.html` | Интерактивный EDA-отчёт |
+| `reports/model_metrics.json` | Финальные метрики модели |
+| `models/classifier.pkl` | Обученная sklearn-модель |
 
 ## UI — Streamlit Dashboard
 ```bash
@@ -143,12 +120,26 @@ streamlit run ui/app.py
 ```
 
 Дашборд включает 4 вкладки:
-- 🚀 Онбординг: задать тему, LLM предлагает источники, пользователь выбирает
-- 🔍 HITL проверка: просмотр и правка меток
-- 📊 Аналитика: графики + конструктор отчёта
-- 💬 Чат с LLM: вопросы о данных и гипотезах
+- `🚀 Онбординг` — задать тему и получить рекомендации по источникам
+- `🔍 Проверка меток` — HITL-очередь с правкой и сохранением меток
+- `📊 Аналитика` — графики, лицензии, конструктор отчёта
+- `💬 Чат с LLM` — вопросы о данных, гипотезах и качестве
 
-## Domain
-Topic: sailing and yacht navigation
-Classes: navigation, safety, equipment, weather, licensing
-Review label: other_or_offtopic
+## Retrospective
+
+### Что сработало хорошо
+- Fallback chain Gemini — пайплайн не падает из-за LLM недоступности
+- ContextMemory — каждый агент знает, что сделал предыдущий
+- Graceful degradation везде — тесты проходят без обязательных реальных API-вызовов
+- Streamlit UI — ключевые действия доступны без CLI
+
+### Что можно улучшить
+- Тематических данных мало (23.4%) — нужно больше яхтинг-специфичных источников
+- `navigation` и `weather` классы слабые (`F1 < 0.35`) из-за малого числа примеров
+- Gemini нестабилен и часто уходит в fallback — стоит рассмотреть более стабильный тариф или провайдера
+- `sailingforums` сильно проседает после чистки (`20 -> 5` строк)
+
+### Что бы сделал иначе
+- Начал бы с более тематических HuggingFace датасетов вместо `emotion/tweets`
+- Добавил бы augmentation для малых классов
+- Реализовал бы fine-tune DistilBERT как следующий baseline upgrade

@@ -19,6 +19,12 @@ from loguru import logger
 
 from core.context_memory import ContextMemory
 
+PIPELINE_SYSTEM_CONTEXT = """
+You are an ML assistant in smart-data-pipeline.
+Always respond in Russian for user-facing content.
+Keep responses concise and data-focused.
+""".strip()
+
 
 class GeminiLLMClient:
     """Build compact dataset summaries and generate a domain spec with Gemini."""
@@ -614,13 +620,21 @@ class GeminiLLMClient:
             logger.warning("LLM stopwords fallback to base set: {}", exc)
             return set(base_stopwords)
 
-    def generate(self, prompt: str) -> str:
+    def generate(
+        self,
+        prompt: str,
+        use_pipeline_context: bool = True,
+    ) -> str:
         """Generate raw text with retry logic and model fallback chain."""
         client = self._get_client()
         if client is None:
             return "{}"
 
-        prompt = prompt[: min(self._max_prompt_chars, 800)]
+        full_prompt = str(prompt)
+        if use_pipeline_context:
+            full_prompt = f"{PIPELINE_SYSTEM_CONTEXT}\n\n{prompt}"
+
+        prompt = full_prompt[: min(self._max_prompt_chars, 800)]
         types = importlib.import_module("google.genai.types")
         last_error = ""
 

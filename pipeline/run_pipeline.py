@@ -1,0 +1,156 @@
+"""Prefect orchestration for the full smart-data-pipeline."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+from dotenv import load_dotenv
+from loguru import logger
+
+os.environ.setdefault("PREFECT_SERVER_ANALYTICS_ENABLED", "false")
+os.environ.setdefault("DO_NOT_TRACK", "1")
+
+from prefect import flow, task
+
+load_dotenv()
+
+
+@task(name="collect_data")
+def collect() -> pd.DataFrame:
+    """Collect raw data through the existing data collection agent."""
+    from agents.data_collection_agent import DataCollectionAgent
+
+    agent = DataCollectionAgent()
+    return agent.run()
+
+
+@task(name="clean_data")
+def clean(df: pd.DataFrame) -> pd.DataFrame:
+    """Clean the raw dataframe with the existing quality agent."""
+    from agents.data_quality_agent import DataQualityAgent
+
+    agent = DataQualityAgent()
+    return agent.run(df)
+
+
+@task(name="annotate_data")
+def annotate(df: pd.DataFrame) -> pd.DataFrame:
+    """Auto-label the cleaned dataframe and create the review queue."""
+    from agents.annotation_agent import AnnotationAgent
+
+    agent = AnnotationAgent()
+    return agent.run(df)
+
+
+@task(name="human_review")
+def human_review(df_confident: pd.DataFrame, df_review: pd.DataFrame | None) -> pd.DataFrame:
+    """Merge manually corrected review-queue rows back into the confident set."""
+    from core.context_memory import ContextMemory
+
+    review_path = Path("data/review_queue.csv")
+    if review_path.exists():
+        review_queue = pd.read_csv(review_path)
+        corrected = review_queue.loc[
+            review_queue["corrected_label"].notna()
+            & review_queue["corrected_label"].astype(str).ne("")
+        ].copy()
+        logger.info("HITL: {} примеров проверено человеком", len(corrected))
+
+        if len(corrected) > 0:
+            corrected_df = corrected[
+                ["id", "text", "corrected_label", "source"]
+            ].rename(columns={"corrected_label": "label"})
+            corrected_df["confidence"] = 1.0
+            corrected_df["label_source"] = "hitl"
+            merged = pd.concat([df_confident, corrected_df], ignore_index=True)
+            ContextMemory().update(
+                step="3.2",
+                status="done",
+                metrics={
+                    "reviewed_examples": int(len(corrected)),
+                    "confident_rows": int(len(df_confident)),
+                    "rows_after_merge": int(len(merged)),
+                },
+                notes="HITL corrections merged into training set",
+            )
+            return merged
+
+    return df_confident
+
+
+@task(name="active_learning")
+def active_learn(df: pd.DataFrame) -> dict[str, Any]:
+    """Run active learning on the reviewed dataset."""
+    from agents.al_agent import ActiveLearningAgent
+
+    agent = ActiveLearningAgent()
+    return agent.run(df)
+
+
+@task(name="train_model")
+def train(df: pd.DataFrame) -> dict[str, Any]:
+    """Train the final model harness on the reviewed dataset."""
+    from core.model_wrapper import ModelWrapper
+
+    wrapper = ModelWrapper()
+    return wrapper.fit(df)
+
+
+@flow(
+    name="smart-data-pipeline",
+    description="End-to-end text classification pipeline",
+)
+def data_pipeline(
+    skip_hitl: bool = False,
+    skip_al: bool = False,
+    topic: str | None = None,
+) -> dict[str, Any]:
+    """Run the full smart-data-pipeline with optional HITL and AL skips."""
+    from core.context_memory import ContextMemory
+
+    logger.info("=== Smart Data Pipeline START ===")
+    if topic:
+        logger.info("Topic override: {}", topic)
+
+    raw_df = collect()
+    clean_df = clean(raw_df)
+    annotation_result = annotate(clean_df)
+
+    if skip_hitl:
+        logger.warning(
+            "⚠️ HITL пропущен! Модель обучается только на авторазметке."
+        )
+        reviewed_df = annotation_result
+    else:
+        reviewed_df = human_review(annotation_result, None)
+
+    if skip_al:
+        logger.warning("⚠️ Active Learning пропущен!")
+        al_result: dict[str, Any] = {"skipped": True}
+    else:
+        al_result = active_learn(reviewed_df)
+        logger.info("AL summary: {}", al_result)
+
+    metrics = train(reviewed_df)
+
+    logger.info("=== Pipeline COMPLETE ===")
+    logger.info("Accuracy: {:.3f}", metrics["accuracy"])
+    logger.info("F1 macro: {:.3f}", metrics["f1_macro"])
+
+    ContextMemory().update(
+        step="6.1",
+        status="done",
+        metrics=metrics,
+        notes="Full pipeline completed",
+    )
+    return metrics
+
+
+if __name__ == "__main__":
+    results = data_pipeline()
+    logger.success("✅ Pipeline done!")
+    logger.success("Accuracy: {:.3f}", results["accuracy"])
+    logger.success("F1 macro: {:.3f}", results["f1_macro"])
