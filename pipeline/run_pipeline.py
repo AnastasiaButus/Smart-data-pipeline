@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import sys
 import os
+import pathlib
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 from dotenv import load_dotenv
 from loguru import logger
+
+# Добавляем корень проекта в Python path
+# чтобы находить core/, agents/ из любой папки
+PROJECT_ROOT = pathlib.Path(__file__).parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 os.environ.setdefault("PREFECT_SERVER_ANALYTICS_ENABLED", "false")
 os.environ.setdefault("DO_NOT_TRACK", "1")
