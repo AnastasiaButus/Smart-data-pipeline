@@ -30,7 +30,7 @@ from ui.report_generator import (
 
 st.set_page_config(
     page_title="Smart Data Pipeline",
-    page_icon="🚢",
+    page_icon="⛵",
     layout="wide",
 )
 
@@ -360,7 +360,7 @@ def render_sidebar(llm_client: GeminiLLMClient) -> float:
 
 def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
     """Render onboarding flow for topic and source discovery."""
-    st.title("🚢 Smart Data Pipeline")
+    st.title("⛵ Smart Data Pipeline")
 
     if st.session_state.get("topic") and not st.session_state.get("editing_topic", False):
         st.subheader("Текущая конфигурация домена")

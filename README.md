@@ -61,15 +61,18 @@ Edit `.env` with your API keys, then edit `config.yaml` to set your classificati
 
 ## What it looks like
 
+### EDA Report - интерактивный HTML
+
+![Dataset overview](docs/screenshots/eda_overview.png)
+![WordCloud](docs/screenshots/eda_wordcloud.png)
+![Data quality](docs/screenshots/eda_quality.png)
+
 ### Streamlit Dashboard
 
-| Sidebar — прогресс пайплайна | HITL — проверка меток |
-|---|---|
-| ![Sidebar](docs/screenshots/ui_sidebar.png) | ![HITL](docs/screenshots/ui_hitl.png) |
+> 💡 Скриншоты дашборда будут добавлены
+> после финальной полировки UI
 
-| Аналитика + конструктор отчёта | Чат с Gemini |
-|---|---|
-| ![Analytics](docs/screenshots/ui_analytics.png) | ![Chat](docs/screenshots/ui_chat.png) |
+Запуск: `streamlit run ui/app.py`
 
 ## ✨ Features
 
