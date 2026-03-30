@@ -1,6 +1,8 @@
 # smart-data-pipeline
 ![WIP](https://img.shields.io/badge/status-WIP-yellow)
-![Tests](https://img.shields.io/badge/tests-41%20passed-green)
+![Tests](https://img.shields.io/badge/tests-43%20passed-green)
+![EDA](https://img.shields.io/badge/EDA-interactive-blue)
+![LLM](https://img.shields.io/badge/LLM-Gemini-orange)
 ![Python](https://img.shields.io/badge/python-3.12.6-blue)
 
 An end-to-end educational ML pipeline for domain-driven text classification with data collection, LLM-assisted domain reformulation, and human review.
@@ -49,6 +51,33 @@ Edit `.env` with your API keys, then edit `config.yaml` to set your classificati
 | reports/domain_reformulation.md | Domain reformulation details |
 | reports/wordcloud_all.png | WordCloud full corpus |
 | reports/wordcloud_domain.png | WordCloud domain sources only |
+
+## What it looks like
+
+> EDA Report - интерактивный, открывается в браузере без сервера
+
+![Dataset overview](docs/screenshots/eda_overview.png)
+![WordCloud](docs/screenshots/eda_wordcloud.png)
+![Data quality](docs/screenshots/eda_quality.png)
+
+## How to change the topic
+
+This pipeline works for **any text classification domain**.
+Change one line in `config.yaml`:
+
+```yaml
+domain:
+  topic: "your topic here"  # e.g. "medical diagnosis", "legal documents"
+```
+
+The LLM (Gemini) will automatically:
+- reformulate the topic into precise ML task
+- generate 5-7 classification classes
+- suggest keywords and annotation guidelines
+
+**Example domains tested:**
+- Sailing & yacht navigation *(current demo)*
+- Any domain with forum/RSS/HuggingFace coverage
 
 ## Domain
 Topic: sailing and yacht navigation
