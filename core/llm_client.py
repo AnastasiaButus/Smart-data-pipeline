@@ -6,6 +6,7 @@ import importlib
 import json
 import os
 import re
+import time
 from collections import Counter
 from copy import deepcopy
 from pathlib import Path
@@ -250,6 +251,17 @@ class GeminiLLMClient:
         self._temperature = float(self._llm_cfg.get("temperature", 0.2))
         self._max_tokens = int(self._llm_cfg.get("max_tokens", 800))
         self._max_prompt_chars = int(self._llm_cfg.get("max_prompt_chars", 2000))
+        self._fallback_models = self._build_model_chain(
+            self.model,
+            self._llm_cfg.get(
+                "fallback_models",
+                [
+                    "models/gemini-2.5-flash",
+                    "models/gemini-flash-latest",
+                    "models/gemma-3-4b-it",
+                ],
+            ),
+        )
 
         try:
             importlib.import_module("google.genai")
@@ -355,7 +367,7 @@ class GeminiLLMClient:
                 logger.warning("Gemini returned invalid or empty JSON. Using fallback.")
                 return fallback
             logger.info("Domain specification generated with Gemini")
-            return validated
+            return self._compose_domain_spec(validated, topic, dataset_summary)
         except Exception as exc:
             logger.error("Gemini generation failed: {}. Using fallback.", exc)
             return fallback
@@ -371,42 +383,12 @@ class GeminiLLMClient:
         if not (5 <= len(classes) <= 7):
             classes = list(self._DEFAULT_CLASSES)
 
-        source_fit: dict[str, dict[str, str]] = {}
-        for source_name in dataset_summary.get("source_distribution", {}).keys():
-            if source_name.startswith("huggingface_"):
-                fit = "low"
-                notes = (
-                    "Useful for volume, but the source is partially off-topic and may bias"
-                    " the task toward generic sentiment or emotion language."
-                )
-            elif source_name.startswith("stackexchange_"):
-                fit = "high"
-                notes = (
-                    "Practical question data is close to sailing problem solving and future"
-                    " annotation use cases."
-                )
-            elif source_name.startswith("rss_") or source_name == "sailingforums":
-                fit = "high"
-                notes = (
-                    "Domain-relevant editorial or forum content is a strong fit for sailing,"
-                    " navigation, seamanship, and safety topics."
-                )
-            else:
-                fit = "medium"
-                notes = "Source relevance is uncertain and should be reviewed during HITL."
-            source_fit[source_name] = {"fit": fit, "notes": notes}
-
         keywords_by_class = {
             class_name: self._keywords_for_class(class_name, dataset_summary)
             for class_name in classes
         }
-        collection_queries = {
-            class_name: [
-                f"{topic} {class_name}",
-                f"{class_name} sailing best practices",
-            ]
-            for class_name in classes
-        }
+        collection_queries = self._build_collection_queries(topic, keywords_by_class)
+        source_fit = self._build_source_fit(dataset_summary)
 
         return {
             "normalized_topic": topic,
@@ -581,6 +563,90 @@ class GeminiLLMClient:
         self.save_context_memory(spec, summary)
         return spec
 
+    def generate(self, prompt: str) -> str:
+        """Generate raw text with retry logic and model fallback chain."""
+        client = self._get_client()
+        if client is None:
+            return "{}"
+
+        prompt = prompt[: min(self._max_prompt_chars, 800)]
+        types = importlib.import_module("google.genai.types")
+        last_error = ""
+
+        for attempt in range(3):
+            retriable_seen = False
+            for model_name in self._fallback_models:
+                try:
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            temperature=self._temperature,
+                            max_output_tokens=self._max_tokens,
+                            response_mime_type="application/json",
+                        ),
+                    )
+                    text = (getattr(response, "text", "") or "").strip()
+                    if text:
+                        logger.info(
+                            "Gemini response received from model {} on attempt {}",
+                            model_name,
+                            attempt + 1,
+                        )
+                        return text
+                    last_error = f"Empty response from {model_name}"
+                except Exception as exc:
+                    last_error = str(exc)
+                    if "503" in last_error or "429" in last_error:
+                        retriable_seen = True
+                        logger.warning(
+                            "Model {} attempt {} hit retriable error: {}",
+                            model_name,
+                            attempt + 1,
+                            exc,
+                        )
+                        continue
+                    logger.error(
+                        "Model {} failed with non-retriable error: {}",
+                        model_name,
+                        exc,
+                    )
+                    return "{}"
+
+            if retriable_seen and attempt < 2:
+                wait = 10 * (attempt + 1)
+                logger.warning("Attempt {} failed, waiting {}s", attempt + 1, wait)
+                time.sleep(wait)
+            else:
+                break
+
+        logger.error("Gemini generate exhausted retries. Last error: {}", last_error)
+        return "{}"
+
+    def generate_json(self, prompt: str) -> dict[str, Any]:
+        """Generate JSON and recover from common formatting noise."""
+        raw_text = self.generate(prompt).strip()
+        if not raw_text:
+            return {}
+
+        raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text, flags=re.IGNORECASE)
+        raw_text = re.sub(r"\s*```$", "", raw_text)
+
+        start = raw_text.find("{")
+        end = raw_text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            raw_text = raw_text[start : end + 1]
+
+        try:
+            return json.loads(raw_text)
+        except json.JSONDecodeError as exc:
+            logger.error(
+                "Failed to parse Gemini JSON: {}. Raw head: {}",
+                exc,
+                raw_text[:200],
+            )
+            return {}
+
     def _get_client(self) -> Any | None:
         """Lazily initialize the Gemini SDK client."""
         if self._client is not None:
@@ -598,28 +664,7 @@ class GeminiLLMClient:
 
     def _generate_json_response(self, prompt: str) -> dict[str, Any]:
         """Call Gemini and parse a JSON-only response."""
-        client = self._get_client()
-        if client is None:
-            raise RuntimeError("Gemini client is not available")
-
-        types = importlib.import_module("google.genai.types")
-        response = client.models.generate_content(
-            model=self.model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=self._temperature,
-                max_output_tokens=self._max_tokens,
-            ),
-        )
-        raw_text = (getattr(response, "text", "") or "").strip()
-        if not raw_text:
-            raise ValueError("Gemini returned an empty response")
-
-        fenced_match = re.search(r"```(?:json)?\s*(\{.*\})\s*```", raw_text, re.DOTALL)
-        if fenced_match:
-            raw_text = fenced_match.group(1).strip()
-
-        return json.loads(raw_text)
+        return self.generate_json(prompt)
 
     def _build_prompt(
         self,
@@ -627,76 +672,57 @@ class GeminiLLMClient:
         dataset_summary: dict[str, Any],
         current_classes: list[str],
     ) -> str:
-        """Build a bounded prompt that contains only compact summary data."""
-        payload = deepcopy(dataset_summary)
-        memory_summary = ContextMemory(
-            self._project_root / "reports" / "context_memory.json"
-        ).get_summary_for_llm(max_chars=300)
-        if memory_summary:
-            payload["context_memory_summary"] = memory_summary
-
-        summary_json = self._compact_summary_json(payload)
-        prompt = (
-            "You are designing a domain specification for an educational ML pipeline.\n"
-            "Project focus must remain in sailing, yacht navigation, seamanship, safety,"
-            " weather, licensing, and onboard equipment.\n"
-            "Important constraints:\n"
-            "- The current dataset contains noisy and partially off-topic rows.\n"
-            "- Do not turn the task into emotion classification.\n"
-            "- Recommend 5 to 7 classes suitable for future zero-shot annotation.\n"
-            "- Always include review_label exactly as 'other_or_offtopic'.\n"
-            "- Evaluate every source in source_fit with fit values high, medium, or low.\n"
-            "- Use only the summary information provided below.\n"
-            "- Return JSON only with keys: normalized_topic, recommended_classes,"
-            " keywords_by_class, collection_queries, source_fit, review_label,"
-            " annotation_guidelines, risks, llm_notes.\n"
-            f"Current topic: {topic}\n"
-            f"Current classes: {json.dumps(current_classes, ensure_ascii=False)}\n"
-            f"Dataset summary: {summary_json}\n"
+        """Build a short JSON-only prompt capped at 800 characters."""
+        payload = self._compact_summary_json(
+            {
+                "total_rows": dataset_summary.get("total_rows", 0),
+                "source_distribution": dataset_summary.get("source_distribution", {}),
+                "top_keywords_global": dataset_summary.get("top_keywords_global", []),
+                "pct_short_texts": dataset_summary.get("pct_short_texts", 0),
+                "pct_long_texts": dataset_summary.get("pct_long_texts", 0),
+            }
         )
-        return prompt[: self._max_prompt_chars]
+
+        prompt = (
+            "JSON only. Sailing domain only, not emotions. "
+            "Use keys: normalized_topic, recommended_classes, keywords_by_class, "
+            "annotation_guidelines, risks, llm_notes. "
+            "Use 5 lowercase classes. Use 3 short keywords per class. "
+            "Use 2 short guidelines. Use 2 short risks. "
+            "Keep llm_notes under 12 words. "
+            f"Topic={topic}. Classes={json.dumps(current_classes[:7], separators=(',', ':'))}. "
+            f"Data={payload}."
+        )
+        return prompt[:800]
 
     def _compact_summary_json(self, dataset_summary: dict[str, Any]) -> str:
-        """Shrink the summary JSON until it fits the configured prompt budget."""
+        """Shrink summary JSON to a compact payload safe for prompt embedding."""
         payload = deepcopy(dataset_summary)
-        overhead = 1100
+        source_distribution = payload.get("source_distribution", {})
+        payload["source_distribution"] = dict(list(source_distribution.items())[:3])
+        payload["top_keywords_global"] = payload.get("top_keywords_global", [])[:6]
 
         while True:
             encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-            if len(encoded) + overhead <= self._max_prompt_chars:
+            if len(encoded) <= 350:
                 return encoded
 
-            top_keywords_by_source = payload.get("top_keywords_by_source", {})
-            if any(len(keywords) > 4 for keywords in top_keywords_by_source.values()):
-                payload["top_keywords_by_source"] = {
-                    source_name: keywords[:4]
-                    for source_name, keywords in top_keywords_by_source.items()
-                }
-                continue
-
             top_keywords_global = payload.get("top_keywords_global", [])
-            if len(top_keywords_global) > 8:
-                payload["top_keywords_global"] = top_keywords_global[:8]
+            if len(top_keywords_global) > 4:
+                payload["top_keywords_global"] = top_keywords_global[:4]
                 continue
 
             source_distribution = payload.get("source_distribution", {})
-            if len(source_distribution) > 5:
-                payload["source_distribution"] = dict(list(source_distribution.items())[:5])
+            if len(source_distribution) > 2:
+                payload["source_distribution"] = dict(list(source_distribution.items())[:2])
                 continue
 
-            payload.pop("context_memory_summary", None)
             minimal_payload = {
                 "total_rows": payload.get("total_rows", 0),
-                "columns": payload.get("columns", [])[:5],
-                "source_distribution": dict(
-                    list(payload.get("source_distribution", {}).items())[:3]
-                ),
-                "avg_text_len": payload.get("avg_text_len", 0),
+                "sources": payload.get("source_distribution", {}),
                 "pct_short_texts": payload.get("pct_short_texts", 0),
                 "pct_long_texts": payload.get("pct_long_texts", 0),
-                "top_keywords_global": payload.get("top_keywords_global", [])[:5],
-                "current_topic": payload.get("current_topic", ""),
-                "current_classes": payload.get("current_classes", [])[:7],
+                "keywords": payload.get("top_keywords_global", [])[:4],
             }
             return json.dumps(
                 minimal_payload,
@@ -705,17 +731,14 @@ class GeminiLLMClient:
             )
 
     def _validate_spec(self, spec: Any) -> dict[str, Any] | None:
-        """Validate and normalize the generated domain specification."""
+        """Validate and normalize the LLM-returned partial specification."""
         if not isinstance(spec, dict):
             return None
 
         normalized_topic = str(spec.get("normalized_topic", "")).strip()
         recommended_classes = self._safe_classes(spec.get("recommended_classes", []))
-        review_label = str(spec.get("review_label", "")).strip()
 
         if not normalized_topic or not (5 <= len(recommended_classes) <= 7):
-            return None
-        if review_label != "other_or_offtopic":
             return None
 
         keywords_by_class = {
@@ -726,30 +749,6 @@ class GeminiLLMClient:
             ][:8]
             for class_name in recommended_classes
         }
-        collection_queries = {
-            class_name: [
-                str(query).strip()
-                for query in spec.get("collection_queries", {}).get(class_name, [])
-                if str(query).strip()
-            ][:4]
-            for class_name in recommended_classes
-        }
-        source_fit_raw = spec.get("source_fit", {})
-        source_fit = {}
-        if not isinstance(source_fit_raw, dict) or not source_fit_raw:
-            return None
-
-        for source_name, fit_info in source_fit_raw.items():
-            if not isinstance(fit_info, dict):
-                return None
-            fit_value = str(fit_info.get("fit", "")).strip().lower()
-            if fit_value not in {"high", "medium", "low"}:
-                return None
-            source_fit[str(source_name)] = {
-                "fit": fit_value,
-                "notes": str(fit_info.get("notes", "")).strip(),
-            }
-
         annotation_guidelines = [
             str(item).strip()
             for item in spec.get("annotation_guidelines", [])
@@ -766,13 +765,88 @@ class GeminiLLMClient:
             "normalized_topic": normalized_topic,
             "recommended_classes": recommended_classes,
             "keywords_by_class": keywords_by_class,
-            "collection_queries": collection_queries,
-            "source_fit": source_fit,
-            "review_label": review_label,
             "annotation_guidelines": annotation_guidelines,
             "risks": risks,
             "llm_notes": str(spec.get("llm_notes", "")).strip(),
         }
+
+    def _compose_domain_spec(
+        self,
+        partial_spec: dict[str, Any],
+        topic: str,
+        dataset_summary: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Compose the final spec from LLM output plus local heuristics."""
+        keywords_by_class = partial_spec.get("keywords_by_class", {})
+        llm_notes = partial_spec.get("llm_notes", "").strip()
+        if not llm_notes:
+            llm_notes = "Gemini domain spec generated from compact dataset summary."
+
+        return {
+            "normalized_topic": partial_spec["normalized_topic"],
+            "recommended_classes": partial_spec["recommended_classes"],
+            "keywords_by_class": keywords_by_class,
+            "collection_queries": self._build_collection_queries(topic, keywords_by_class),
+            "source_fit": self._build_source_fit(dataset_summary),
+            "review_label": "other_or_offtopic",
+            "annotation_guidelines": partial_spec["annotation_guidelines"],
+            "risks": partial_spec["risks"],
+            "llm_notes": llm_notes,
+        }
+
+    def _build_source_fit(
+        self,
+        dataset_summary: dict[str, Any],
+    ) -> dict[str, dict[str, str]]:
+        """Build heuristic source fit metadata from the dataset summary."""
+        source_fit: dict[str, dict[str, str]] = {}
+        for source_name in dataset_summary.get("source_distribution", {}).keys():
+            if source_name.startswith("huggingface_"):
+                fit = "low"
+                notes = (
+                    "Useful for volume, but partially off-topic and prone to generic"
+                    " emotion or sentiment language."
+                )
+            elif source_name.startswith("stackexchange_"):
+                fit = "high"
+                notes = "Operational sailing questions align well with downstream annotation."
+            elif source_name.startswith("rss_") or source_name == "sailingforums":
+                fit = "high"
+                notes = "Domain-relevant editorial or forum content fits sailing workflows well."
+            else:
+                fit = "medium"
+                notes = "Source relevance is uncertain and should be reviewed in HITL."
+            source_fit[source_name] = {"fit": fit, "notes": notes}
+        return source_fit
+
+    def _build_collection_queries(
+        self,
+        topic: str,
+        keywords_by_class: dict[str, list[str]],
+    ) -> dict[str, list[str]]:
+        """Build collection queries locally from class names and keywords."""
+        queries: dict[str, list[str]] = {}
+        for class_name, keywords in keywords_by_class.items():
+            lead_keyword = keywords[0] if keywords else class_name
+            queries[class_name] = [
+                f"{topic} {class_name}",
+                f"sailing {lead_keyword}",
+            ]
+        return queries
+
+    def _build_model_chain(self, primary_model: str, fallback_models: Any) -> list[str]:
+        """Build a unique ordered model chain starting with the primary model."""
+        ordered = [str(primary_model).strip()]
+        if isinstance(fallback_models, list):
+            ordered.extend(str(model).strip() for model in fallback_models if str(model).strip())
+
+        unique: list[str] = []
+        seen: set[str] = set()
+        for model_name in ordered:
+            if model_name and model_name not in seen:
+                seen.add(model_name)
+                unique.append(model_name)
+        return unique
 
     def _keywords_for_class(
         self,
