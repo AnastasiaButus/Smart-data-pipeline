@@ -323,7 +323,11 @@ HTML_STYLE = """
     padding-bottom: 8px;
     border-bottom: 2px solid #0f3460;
     color: #0f3460;
+    cursor: pointer;
+    user-select: none;
   }
+  h2::after { content: " ▾"; font-size: 0.8em; color: #999; }
+  h2.collapsed::after { content: " ▸"; }
   .subtitle {
     color: #666;
     margin-bottom: 32px;
@@ -383,7 +387,24 @@ HTML_STYLE = """
     line-height: 1.9;
     color: #444;
   }
+  .section-content { transition: opacity 0.2s; }
+  .section-content.hidden { display: none; }
 </style>
+"""
+
+COLLAPSIBLE_SCRIPT = """
+<script>
+document.querySelectorAll('h2').forEach(h2 => {
+  h2.addEventListener('click', () => {
+    h2.classList.toggle('collapsed');
+    let next = h2.nextElementSibling;
+    while (next && next.tagName !== 'H2') {
+      next.classList.toggle('hidden');
+      next = next.nextElementSibling;
+    }
+  });
+});
+</script>
 """
 
 
@@ -772,7 +793,7 @@ def build_conclusions_html(
 ) -> str:
     """Build the conclusions and recommendations section as styled HTML."""
     return f"""
-<div class="conclusions">
+<div class="conclusions section-content">
   <h2>Выводы и рекомендации</h2>
   <ul>
     <li>Тематических строк: <strong>{thematic_stats['thematic_rows']} ({thematic_stats['thematic_pct']:.1f}%)</strong>
@@ -869,13 +890,13 @@ def build_insights(
 def build_hypotheses_html(hypotheses: list[str]) -> str:
     """Render hypotheses as a styled HTML list."""
     items = "".join(f"<li>{escape(item)}</li>" for item in hypotheses)
-    return f"<ul class='hypothesis-list'>{items}</ul>"
+    return f"<ul class='hypothesis-list section-content'>{items}</ul>"
 
 
 def wrap_chart_block(content_html: str, insight_html: str = "") -> str:
     """Wrap a chart or image block with optional insight copy."""
     insight = f"<div class='insight'>{insight_html}</div>" if insight_html else ""
-    return f"<div class='chart-block'>{content_html}{insight}</div>"
+    return f"<div class='chart-block section-content'>{content_html}{insight}</div>"
 
 
 def build_eda_assets(project_root: Path | None = None) -> dict[str, Any]:
@@ -1052,6 +1073,7 @@ def export_eda_report(
         "<h2>LLM hypotheses</h2>",
         build_hypotheses_html(assets["hypotheses"]),
         assets["conclusions_html"],
+        COLLAPSIBLE_SCRIPT,
         "</body></html>",
     ]
 

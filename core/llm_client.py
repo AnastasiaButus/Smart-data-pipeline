@@ -759,7 +759,8 @@ class GeminiLLMClient:
         prompt = (
             "Based on this dataset summary, generate exactly 5 hypotheses for text "
             "classification. Format as JSON list of strings. Each hypothesis max 2 "
-            f"sentences. JSON only. Summary={json.dumps(payload, separators=(',', ':'))}"
+            "sentences. JSON only. Write all hypotheses in Russian language. "
+            f"Summary={json.dumps(payload, separators=(',', ':'))}"
         )
         return prompt[:600]
 
@@ -963,28 +964,26 @@ class GeminiLLMClient:
 
         return [
             (
-                f"HuggingFace sources contribute about {hf_pct}% of rows, so the first"
-                " classification split should separate domain-relevant sailing texts from"
-                " off-topic emotion and tweet content."
+                f"HuggingFace источники составляют {hf_pct}% данных — первый шаг"
+                " классификации должен отделить тематические тексты о яхтинге от"
+                " оффтопных."
             ),
             (
-                f"Domain-oriented sources still make up about {domain_pct}% of the dataset,"
-                " which is enough to support operational classes like navigation, safety,"
-                " equipment, weather, and licensing."
+                f"Тематические источники ({domain_pct}%) достаточны для поддержки"
+                " классов: навигация, безопасность, оборудование, погода,"
+                " лицензирование."
             ),
             (
-                f"About {short_pct}% of texts are short, so concise headlines and snippets"
-                " may require a conservative annotation strategy or review_label routing."
+                f"{short_pct}% текстов короткие — краткие заголовки потребуют"
+                " консервативной стратегии аннотации через review_label."
             ),
             (
-                f"Only {long_pct}% of texts are very long, suggesting the future baseline"
-                " model can focus on short-to-medium passages before handling long-form"
-                " outliers."
+                f"Только {long_pct}% текстов очень длинные — базовая модель может"
+                " фокусироваться на коротких и средних текстах."
             ),
             (
-                f"Detected HTML entity noise count is {html_entities}, so cleaning markup"
-                " artifacts should improve both token quality and downstream keyword-based"
-                " labeling."
+                f"{html_entities} HTML-entity артефактов в датасете — очистка"
+                " разметки улучшит качество токенизации и keyword-разметки."
             ),
         ]
 
