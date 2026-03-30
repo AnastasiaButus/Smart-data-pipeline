@@ -95,7 +95,7 @@ model:
   base_model: logistic_regression
 llm:
   provider: gemini
-  model: gemini-1.5-flash
+  model: models/gemini-2.0-flash
   max_tokens: 1000
   temperature: 0.3
   max_prompt_chars: 2000

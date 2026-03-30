@@ -244,7 +244,9 @@ class GeminiLLMClient:
 
         self._domain_cfg = self._cfg.get("domain", {}) if self._config_valid else {}
         self._llm_cfg = self._cfg.get("llm", {}) if self._config_valid else {}
-        self._model_name = str(self._llm_cfg.get("model", "gemini-1.5-flash"))
+        self.model = str(
+            self._llm_cfg.get("model", "models/gemini-2.0-flash")
+        )
         self._temperature = float(self._llm_cfg.get("temperature", 0.2))
         self._max_tokens = int(self._llm_cfg.get("max_tokens", 800))
         self._max_prompt_chars = int(self._llm_cfg.get("max_prompt_chars", 2000))
@@ -602,7 +604,7 @@ class GeminiLLMClient:
 
         types = importlib.import_module("google.genai.types")
         response = client.models.generate_content(
-            model=self._model_name,
+            model=self.model,
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=self._temperature,
