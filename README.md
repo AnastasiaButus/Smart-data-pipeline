@@ -1,6 +1,6 @@
 # smart-data-pipeline
 ![WIP](https://img.shields.io/badge/status-WIP-yellow)
-![Tests](https://img.shields.io/badge/tests-71%20passed-green)
+![Tests](https://img.shields.io/badge/tests-75%20passed-green)
 ![EDA](https://img.shields.io/badge/EDA-interactive-blue)
 ![LLM](https://img.shields.io/badge/LLM-Gemini-orange)
 ![Python](https://img.shields.io/badge/python-3.12.6-blue)
@@ -45,6 +45,7 @@ Edit `.env` with your API keys, then edit `config.yaml` to set your classificati
 - [x] Step 2.1: DataQualityAgent - HTML cleanup, dedup, filtering (761 rows -> 609)
 - [x] Step 2.2: DataQualityAgent LLM skill - Gemini explains issues + recommends strategy (+2 bonus)
 - [x] Step 3.1: AnnotationAgent - zero-shot, confidence scoring, review_queue.csv (HITL ★)
+- [x] Step 3.2: Streamlit HITL dashboard - 4 tabs + report builder + Telegram export
 
 ## Reports
 | Report | Description |
@@ -82,6 +83,17 @@ The LLM (Gemini) will automatically:
 **Example domains tested:**
 - Sailing & yacht navigation *(current demo)*
 - Any domain with forum/RSS/HuggingFace coverage
+
+## UI — Streamlit Dashboard
+```bash
+streamlit run ui/app.py
+```
+
+Дашборд включает 4 вкладки:
+- 🚀 Онбординг: задать тему, LLM предлагает источники, пользователь выбирает
+- 🔍 HITL проверка: просмотр и правка меток
+- 📊 Аналитика: графики + конструктор отчёта
+- 💬 Чат с LLM: вопросы о данных и гипотезах
 
 ## Domain
 Topic: sailing and yacht navigation
