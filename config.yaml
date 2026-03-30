@@ -84,7 +84,10 @@ data:
   review_queue_path: data/review_queue.csv
 annotation:
   confidence_threshold: 0.7
-  model: zero-shot
+  model: facebook/bart-large-mnli
+  batch_size: 16
+  modality: text
+  label_source: zero_shot
 active_learning:
   strategy: entropy
   initial_size: 50
