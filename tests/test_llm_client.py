@@ -55,7 +55,12 @@ def _write_config(base_dir: Path, max_prompt_chars: int = 2000) -> Path:
         "model": {"type": "sklearn", "base_model": "logistic_regression"},
         "llm": {
             "provider": "gemini",
-            "model": "gemini-1.5-flash",
+            "model": "models/gemini-flash-latest",
+            "fallback_models": [
+                "models/gemini-2.5-flash",
+                "models/gemini-flash-latest",
+                "models/gemma-3-4b-it",
+            ],
             "max_tokens": 1000,
             "temperature": 0.3,
             "max_prompt_chars": max_prompt_chars,
@@ -388,3 +393,49 @@ def test_prompt_truncation_or_prompt_limit_behavior(
     )
 
     assert len(prompt) <= 900
+
+
+def test_generate_eda_hypotheses_returns_list(
+    temp_project: Path, sample_df: pd.DataFrame, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EDA hypotheses should return a five-item string list from mocked Gemini output."""
+    client = GeminiLLMClient(config_path=str(temp_project / "config.yaml"))
+    summary = client.build_dataset_summary(sample_df)
+    monkeypatch.setattr(client, "is_available", lambda: True)
+    monkeypatch.setattr(
+        client,
+        "generate",
+        lambda prompt: json.dumps(
+            [
+                "Hypothesis 1",
+                "Hypothesis 2",
+                "Hypothesis 3",
+                "Hypothesis 4",
+                "Hypothesis 5",
+            ]
+        ),
+    )
+
+    hypotheses = client.generate_eda_hypotheses(summary)
+
+    assert isinstance(hypotheses, list)
+    assert len(hypotheses) == 5
+
+
+def test_generate_eda_hypotheses_fallback(
+    temp_project: Path, sample_df: pd.DataFrame, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EDA hypotheses should fall back to heuristics when Gemini fails."""
+    client = GeminiLLMClient(config_path=str(temp_project / "config.yaml"))
+    summary = client.build_dataset_summary(sample_df)
+    monkeypatch.setattr(client, "is_available", lambda: True)
+
+    def _raise(_: str) -> str:
+        raise Exception("gemini failed")
+
+    monkeypatch.setattr(client, "generate", _raise)
+
+    hypotheses = client.generate_eda_hypotheses(summary)
+
+    assert isinstance(hypotheses, list)
+    assert len(hypotheses) == 5

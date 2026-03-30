@@ -246,7 +246,7 @@ class GeminiLLMClient:
         self._domain_cfg = self._cfg.get("domain", {}) if self._config_valid else {}
         self._llm_cfg = self._cfg.get("llm", {}) if self._config_valid else {}
         self.model = str(
-            self._llm_cfg.get("model", "models/gemini-2.0-flash")
+            self._llm_cfg.get("model", "models/gemini-flash-latest")
         )
         self._temperature = float(self._llm_cfg.get("temperature", 0.2))
         self._max_tokens = int(self._llm_cfg.get("max_tokens", 800))
@@ -563,6 +563,27 @@ class GeminiLLMClient:
         self.save_context_memory(spec, summary)
         return spec
 
+    def generate_eda_hypotheses(self, dataset_summary: dict[str, Any]) -> list[str]:
+        """Generate five short EDA hypotheses or fall back heuristically."""
+        fallback = self._heuristic_eda_hypotheses(dataset_summary)
+        prompt = self._build_eda_hypotheses_prompt(dataset_summary)
+
+        if not self.is_available():
+            logger.warning("Gemini is not available for EDA hypotheses. Using fallback.")
+            return fallback
+
+        try:
+            raw_text = self.generate(prompt).strip()
+            hypotheses = self._parse_string_list(raw_text)
+            if len(hypotheses) >= 5:
+                logger.info("EDA hypotheses generated with Gemini")
+                return hypotheses[:5]
+            logger.warning("Gemini returned too few EDA hypotheses. Using fallback.")
+            return fallback
+        except Exception as exc:
+            logger.error("EDA hypotheses generation failed: {}. Using fallback.", exc)
+            return fallback
+
     def generate(self, prompt: str) -> str:
         """Generate raw text with retry logic and model fallback chain."""
         client = self._get_client()
@@ -694,6 +715,23 @@ class GeminiLLMClient:
             f"Data={payload}."
         )
         return prompt[:800]
+
+    def _build_eda_hypotheses_prompt(self, dataset_summary: dict[str, Any]) -> str:
+        """Build a compact prompt for EDA hypotheses capped at 600 characters."""
+        payload = {
+            "rows": dataset_summary.get("total_rows", 0),
+            "sources": dict(list(dataset_summary.get("source_distribution", {}).items())[:3]),
+            "short_pct": dataset_summary.get("pct_short_texts", 0),
+            "long_pct": dataset_summary.get("pct_long_texts", 0),
+            "html_entities": dataset_summary.get("html_entity_count", 0),
+            "keywords": dataset_summary.get("top_keywords_global", [])[:5],
+        }
+        prompt = (
+            "Based on this dataset summary, generate exactly 5 hypotheses for text "
+            "classification. Format as JSON list of strings. Each hypothesis max 2 "
+            f"sentences. JSON only. Summary={json.dumps(payload, separators=(',', ':'))}"
+        )
+        return prompt[:600]
 
     def _compact_summary_json(self, dataset_summary: dict[str, Any]) -> str:
         """Shrink summary JSON to a compact payload safe for prompt embedding."""
@@ -847,6 +885,78 @@ class GeminiLLMClient:
                 seen.add(model_name)
                 unique.append(model_name)
         return unique
+
+    def _parse_string_list(self, raw_text: str) -> list[str]:
+        """Parse a JSON string list from noisy model output."""
+        if not raw_text:
+            return []
+
+        cleaned = re.sub(r"^```(?:json)?\s*", "", raw_text, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+
+        start = cleaned.find("[")
+        end = cleaned.rfind("]")
+        if start != -1 and end != -1 and end > start:
+            cleaned = cleaned[start : end + 1]
+
+        try:
+            parsed = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            logger.error(
+                "Failed to parse Gemini string list: {}. Raw head: {}",
+                exc,
+                cleaned[:200],
+            )
+            return []
+
+        if not isinstance(parsed, list):
+            return []
+
+        values = [str(item).strip() for item in parsed if str(item).strip()]
+        return values[:5]
+
+    def _heuristic_eda_hypotheses(self, dataset_summary: dict[str, Any]) -> list[str]:
+        """Build deterministic EDA hypotheses from dataset statistics."""
+        total_rows = int(dataset_summary.get("total_rows", 0))
+        source_distribution = dataset_summary.get("source_distribution", {})
+        hf_rows = sum(
+            count
+            for source_name, count in source_distribution.items()
+            if str(source_name).startswith("huggingface_")
+        )
+        hf_pct = round((hf_rows / total_rows) * 100, 1) if total_rows else 0.0
+        domain_rows = total_rows - hf_rows
+        domain_pct = round((domain_rows / total_rows) * 100, 1) if total_rows else 0.0
+        short_pct = dataset_summary.get("pct_short_texts", 0)
+        long_pct = dataset_summary.get("pct_long_texts", 0)
+        html_entities = dataset_summary.get("html_entity_count", 0)
+
+        return [
+            (
+                f"HuggingFace sources contribute about {hf_pct}% of rows, so the first"
+                " classification split should separate domain-relevant sailing texts from"
+                " off-topic emotion and tweet content."
+            ),
+            (
+                f"Domain-oriented sources still make up about {domain_pct}% of the dataset,"
+                " which is enough to support operational classes like navigation, safety,"
+                " equipment, weather, and licensing."
+            ),
+            (
+                f"About {short_pct}% of texts are short, so concise headlines and snippets"
+                " may require a conservative annotation strategy or review_label routing."
+            ),
+            (
+                f"Only {long_pct}% of texts are very long, suggesting the future baseline"
+                " model can focus on short-to-medium passages before handling long-form"
+                " outliers."
+            ),
+            (
+                f"Detected HTML entity noise count is {html_entities}, so cleaning markup"
+                " artifacts should improve both token quality and downstream keyword-based"
+                " labeling."
+            ),
+        ]
 
     def _keywords_for_class(
         self,

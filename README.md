@@ -1,6 +1,6 @@
 # smart-data-pipeline
 ![WIP](https://img.shields.io/badge/status-WIP-yellow)
-![Tests](https://img.shields.io/badge/tests-36%20passed-green)
+![Tests](https://img.shields.io/badge/tests-41%20passed-green)
 ![Python](https://img.shields.io/badge/python-3.12.6-blue)
 
 An end-to-end educational ML pipeline for domain-driven text classification with data collection, LLM-assisted domain reformulation, and human review.
@@ -39,7 +39,16 @@ Edit `.env` with your API keys, then edit `config.yaml` to set your classificati
 - [x] Step 1.1: DataCollectionAgent - 3 sources, 761 rows
 - [x] Step 1.2: Scraping improvements - StackExchange API, RSS
 - [x] Step 1.3: Gemini LLM - domain reformulation, classes, fallback
-- [ ] Step 1.4: EDA (in progress)
+- [x] Step 1.4: EDA - 8 charts, WordCloud, LLM hypotheses
+
+## Reports
+| Report | Description |
+|--------|-------------|
+| reports/eda_report.html | Interactive EDA - charts + hypotheses |
+| reports/domain_spec.json | LLM domain specification |
+| reports/domain_reformulation.md | Domain reformulation details |
+| reports/wordcloud_all.png | WordCloud full corpus |
+| reports/wordcloud_domain.png | WordCloud domain sources only |
 
 ## Domain
 Topic: sailing and yacht navigation
