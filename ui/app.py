@@ -297,6 +297,7 @@ def style_source_table(df: pd.DataFrame) -> Any:
 def render_sidebar(llm_client: GeminiLLMClient) -> float:
     """Render sidebar controls and return the active threshold."""
     stats = get_pipeline_stats()
+    cfg = load_config()
     st.sidebar.header("⚙️ Pipeline Settings")
 
     topic_value = st.sidebar.text_input(
@@ -315,6 +316,80 @@ def render_sidebar(llm_client: GeminiLLMClient) -> float:
         st.sidebar.caption(
             "Классы: " + ", ".join(st.session_state.get("current_classes", []))
         )
+
+    current_classes_state = st.session_state.get(
+        "current_classes",
+        cfg.get("domain", {}).get("classes", []),
+    )
+    if (
+        "classes_text" not in st.session_state
+        or st.session_state.get("classes_text_last_synced")
+        != "\n".join(current_classes_state)
+    ):
+        st.session_state["classes_text"] = "\n".join(current_classes_state)
+        st.session_state["classes_text_last_synced"] = "\n".join(current_classes_state)
+
+    st.sidebar.markdown("**Классы классификации:**")
+    classes_input = st.sidebar.text_area(
+        "Редактировать классы (каждый с новой строки):",
+        value=st.session_state["classes_text"],
+        height=150,
+        help=(
+            "Можно отредактировать предложенные LLM классы "
+            "или написать свои с нуля"
+        ),
+        key="classes_text",
+    )
+
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        if st.button("💾 Применить классы", key="apply_sidebar_classes"):
+            new_classes = [
+                class_name.strip()
+                for class_name in classes_input.split("\n")
+                if class_name.strip()
+            ]
+            if len(new_classes) >= 2:
+                cfg_data = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+                domain_cfg = cfg_data.setdefault("domain", {})
+                domain_cfg["classes"] = new_classes
+                CONFIG_PATH.write_text(
+                    yaml.safe_dump(
+                        cfg_data,
+                        allow_unicode=True,
+                        default_flow_style=False,
+                        sort_keys=False,
+                    ),
+                    encoding="utf-8",
+                )
+                st.session_state["current_classes"] = new_classes
+                st.session_state["classes_text"] = "\n".join(new_classes)
+                st.session_state["classes_text_last_synced"] = "\n".join(new_classes)
+                st.sidebar.success(f"✅ Сохранено {len(new_classes)} классов")
+                st.rerun()
+            else:
+                st.sidebar.error("Минимум 2 класса!")
+
+    with col2:
+        if st.button("↩️ Сбросить к дефолту", key="reset_sidebar_classes"):
+            default_classes = [
+                "navigation",
+                "safety",
+                "equipment",
+                "weather",
+                "licensing",
+            ]
+            st.session_state["classes_text"] = "\n".join(default_classes)
+            st.session_state["classes_text_last_synced"] = "\n".join(default_classes)
+            st.rerun()
+
+    current = [
+        class_name.strip()
+        for class_name in classes_input.split("\n")
+        if class_name.strip()
+    ]
+    if current:
+        st.sidebar.markdown(" ".join(f"`{class_name}`" for class_name in current))
 
     threshold = st.sidebar.slider(
         "Порог уверенности",
