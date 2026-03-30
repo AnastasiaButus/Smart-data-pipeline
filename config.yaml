@@ -38,9 +38,17 @@ sources:
 
   rss:
     feeds:
-      - "https://www.sail-world.com/rss/rss.xml"
       - "https://www.yachtingworld.com/feed"
-      - "https://sailinganarchy.com/feed"
+      - "https://www.cruisingworld.com/feed/"
+      - "https://www.sailmagazine.com/feed"
+      - "https://www.48north.com/feed/"
+    enabled: true
+
+  stackexchange:
+    api_url: "https://api.stackexchange.com/2.3/questions"
+    site: "outdoors"
+    tag: "sailing"
+    pages: 5
     enabled: true
 
 data:

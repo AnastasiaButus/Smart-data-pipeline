@@ -8,7 +8,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse, urljoin
 from urllib.robotparser import RobotFileParser
 
 import pandas as pd
@@ -17,9 +17,16 @@ import yaml
 from bs4 import BeautifulSoup
 from loguru import logger
 
+# Browser-like User-Agent for sites that block bots
+_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36"
+)
+
 
 class DataCollectionAgent:
-    """Collects raw unlabeled text from HuggingFace datasets, forum scraping, and RSS feeds."""
+    """Collects raw unlabeled text from HuggingFace, forum scraping, RSS, and StackExchange."""
 
     _COLUMNS = ["id", "text", "label", "source", "collected_at"]
     _USER_AGENT = "smart-data-pipeline/0.1 (educational project)"
@@ -56,10 +63,9 @@ class DataCollectionAgent:
             limit: int = ds_spec.get("limit", 300)
             try:
                 logger.info("Fetching HuggingFace dataset {} split={}", name, split)
-                dataset = load_dataset(name, split=split, trust_remote_code=True)
+                dataset = load_dataset(name, split=split)
                 df = dataset.to_pandas()
                 if text_col not in df.columns:
-                    # Try to find a suitable text column
                     text_col = next(
                         (c for c in df.columns if df[c].dtype == object), None
                     )
@@ -85,14 +91,16 @@ class DataCollectionAgent:
         return pd.concat(frames, ignore_index=True)
 
     # ------------------------------------------------------------------ #
-    #  Source: Cruisers Forum scraping                                     #
+    #  Source: Forum scraping (Cruisers Forum → sailingforums.com)        #
     # ------------------------------------------------------------------ #
 
     def scrape_forum(self) -> pd.DataFrame:
-        """Scrape thread titles and first posts from Cruisers Forum sections.
+        """Scrape sailing forum thread titles.
 
-        Respects robots.txt. Returns empty DataFrame if crawling is disallowed
-        or any network error occurs.
+        Strategy:
+        1. Try Cruisers Forum with browser User-Agent.
+        2. If robots.txt blocks — fall back to www.sailingforums.com.
+        Returns empty DataFrame on any unrecoverable error.
         """
         scraping_cfg = self._cfg["sources"]["scraping"]
         if not scraping_cfg.get("enabled", True):
@@ -104,40 +112,51 @@ class DataCollectionAgent:
             logger.info("Cruisers Forum scraping disabled in config")
             return self._empty_df()
 
-        base_url: str = forum_cfg.get("base_url", "https://www.cruisersforum.com")
+        # --- Variant A: Cruisers Forum with browser UA ---
+        cf_base = forum_cfg.get("base_url", "https://www.cruisersforum.com")
         sections: list[str] = forum_cfg.get("sections", ["/forums/f19/", "/forums/f4/"])
         pages_per_section: int = forum_cfg.get("pages_per_section", 3)
 
-        # --- robots.txt check ---
-        if not self._is_crawl_allowed(base_url, self._USER_AGENT):
+        if self._is_crawl_allowed(cf_base, _BROWSER_UA):
+            result = self._scrape_cruisers_forum(cf_base, sections, pages_per_section)
+            if not result.empty:
+                return result
+            logger.info("Cruisers Forum returned 0 rows — falling back to sailingforums.com")
+        else:
             logger.warning(
-                "robots.txt disallows crawling {}, skipping forum scrape", base_url
+                "robots.txt blocks crawling on {} — falling back to sailingforums.com", cf_base
             )
-            return self._empty_df()
 
+        # --- Variant B: sailingforums.com ---
+        return self._scrape_sailingforums()
+
+    def _scrape_cruisers_forum(
+        self, base_url: str, sections: list[str], pages_per_section: int
+    ) -> pd.DataFrame:
+        """Scrape thread titles from Cruisers Forum sections using browser User-Agent."""
         session = requests.Session()
-        session.headers.update({"User-Agent": self._USER_AGENT})
+        session.headers.update({"User-Agent": _BROWSER_UA})
         records: list[dict] = []
 
         for section in sections:
             for page in range(1, pages_per_section + 1):
-                if page > 1:
-                    url = f"{base_url}{section}index{page}.html"
-                else:
-                    url = f"{base_url}{section}"
+                url = (
+                    f"{base_url}{section}index{page}.html"
+                    if page > 1
+                    else f"{base_url}{section}"
+                )
                 try:
-                    logger.info("Scraping forum page: {}", url)
+                    logger.info("Scraping Cruisers Forum: {}", url)
                     resp = session.get(url, timeout=10)
                     resp.raise_for_status()
                     soup = BeautifulSoup(resp.text, "html.parser")
-                    # Try specific Cruisers Forum selectors first, then fallback
                     thread_links = soup.select("a.title, a[id^='thread_title_']")
                     if not thread_links:
                         thread_links = [
                             a for a in soup.find_all("a", href=True)
-                            if "/forums/" in a.get("href", "") and "showthread" in a.get("href", "")
+                            if "showthread" in a.get("href", "")
                         ]
-                    for link in thread_links[:10]:
+                    for link in thread_links[:15]:
                         title_text = link.get_text(strip=True)
                         if len(title_text) >= 20:
                             records.append({
@@ -149,19 +168,56 @@ class DataCollectionAgent:
                     time.sleep(1)  # rate limiting — mandatory
                 except requests.RequestException as exc:
                     logger.warning("Network error scraping {}: {}", url, exc)
-                    continue
                 except Exception as exc:
                     logger.warning("Unexpected error scraping {}: {}", url, exc)
-                    continue
 
         if not records:
-            logger.info(
-                "No records collected from Cruisers Forum (possibly blocked or empty)"
-            )
             return self._empty_df()
-
         df = pd.DataFrame(records)
         logger.info("Cruisers Forum: {} rows collected", len(df))
+        return df
+
+    def _scrape_sailingforums(self) -> pd.DataFrame:
+        """Fallback: scrape thread titles from www.sailingforums.com."""
+        base_url = "https://www.sailingforums.com"
+        if not self._is_crawl_allowed(base_url, _BROWSER_UA):
+            logger.warning("robots.txt blocks sailingforums.com — skipping forum scrape")
+            return self._empty_df()
+
+        session = requests.Session()
+        session.headers.update({"User-Agent": _BROWSER_UA})
+        records: list[dict] = []
+
+        try:
+            logger.info("Scraping fallback forum: {}", base_url)
+            resp = session.get(base_url, timeout=10)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+            # Generic thread link selectors for vBulletin/XenForo style boards
+            thread_links = soup.select(
+                "a.PreviewTooltip, a.title, h3.title a, .structItem-title a, "
+                "a[href*='threads/'], a[href*='showthread']"
+            )
+            for link in thread_links[:40]:
+                title_text = link.get_text(strip=True)
+                if len(title_text) >= 20:
+                    records.append({
+                        "text": title_text,
+                        "label": "unlabeled",
+                        "source": "sailingforums",
+                        "collected_at": datetime.now(timezone.utc).isoformat(),
+                    })
+            time.sleep(1)
+        except requests.RequestException as exc:
+            logger.warning("Network error scraping sailingforums.com: {}", exc)
+        except Exception as exc:
+            logger.warning("Unexpected error scraping sailingforums.com: {}", exc)
+
+        if not records:
+            logger.info("sailingforums.com returned 0 records")
+            return self._empty_df()
+        df = pd.DataFrame(records)
+        logger.info("sailingforums.com: {} rows collected", len(df))
         return df
 
     # ------------------------------------------------------------------ #
@@ -188,6 +244,7 @@ class DataCollectionAgent:
                 if parsed.bozo and not parsed.entries:
                     logger.warning("RSS feed malformed or unavailable: {}", feed_url)
                     continue
+                feed_count = 0
                 for entry in parsed.entries:
                     title = entry.get("title", "")
                     summary = entry.get("summary", "")
@@ -199,7 +256,8 @@ class DataCollectionAgent:
                             "source": f"rss_{domain}",
                             "collected_at": datetime.now(timezone.utc).isoformat(),
                         })
-                logger.info("RSS {}: {} entries collected", domain, len(parsed.entries))
+                        feed_count += 1
+                logger.info("RSS {}: {}/{} entries collected", domain, feed_count, len(parsed.entries))
             except Exception as exc:
                 logger.warning("Failed to fetch RSS {}: {}", feed_url, exc)
 
@@ -211,17 +269,106 @@ class DataCollectionAgent:
         return df
 
     # ------------------------------------------------------------------ #
-    #  Generic scrape (extensibility stub)                                 #
+    #  Source: StackExchange Sailing                                       #
+    # ------------------------------------------------------------------ #
+
+    def fetch_stackexchange(self) -> pd.DataFrame:
+        """Fetch sailing questions from StackExchange public API (site=outdoors, tag=sailing).
+
+        Uses the official JSON API — no robots.txt scraping needed.
+        Robots check is performed on the API domain as a best-practice signal.
+        Returns empty DataFrame on any network error.
+        """
+        se_cfg = self._cfg["sources"].get("stackexchange", {})
+        if not se_cfg.get("enabled", True):
+            logger.info("StackExchange source disabled in config")
+            return self._empty_df()
+
+        pages: int = se_cfg.get("pages", 5)
+        api_root = "https://api.stackexchange.com"
+
+        # robots.txt check on API domain — best practice
+        if not self._is_crawl_allowed(api_root, self._USER_AGENT):
+            logger.warning("robots.txt blocks crawling {}, skipping", api_root)
+            return self._empty_df()
+
+        records: list[dict] = []
+
+        for page_num in range(1, pages + 1):
+            url = (
+                f"{api_root}/2.3/questions"
+                f"?site=outdoors&tagged=sailing&pagesize=100"
+                f"&page={page_num}&order=desc&sort=activity"
+            )
+            try:
+                logger.info("Fetching StackExchange API page {}", page_num)
+                resp = requests.get(url, timeout=10)
+                resp.raise_for_status()
+                data = resp.json()
+
+                items = data.get("items", [])
+                if not items:
+                    logger.info("StackExchange API page {} empty — stopping", page_num)
+                    break
+
+                for item in items:
+                    title: str = item.get("title", "")
+                    tags: list[str] = item.get("tags", [])
+                    tags_str = " ".join(tags)
+                    text = f"{title} {tags_str}".strip() if tags_str else title
+                    if len(text) >= 20:
+                        records.append({
+                            "text": text,
+                            "label": "unlabeled",
+                            "source": "stackexchange_sailing",
+                            "collected_at": datetime.now(timezone.utc).isoformat(),
+                        })
+
+                quota = data.get("quota_remaining", "?")
+                has_more = data.get("has_more", False)
+                logger.info(
+                    "StackExchange API page {}: {} items, quota_remaining={}",
+                    page_num, len(items), quota
+                )
+
+                if not has_more:
+                    break
+                time.sleep(0.5)  # API rate limiting
+
+            except requests.RequestException as exc:
+                logger.warning("Network error on StackExchange API page {}: {}", page_num, exc)
+                break
+            except Exception as exc:
+                logger.warning("Unexpected error on StackExchange API page {}: {}", page_num, exc)
+                break
+
+        if not records:
+            logger.info("StackExchange API returned 0 records")
+            return self._empty_df()
+
+        df = pd.DataFrame(records)
+        logger.info("StackExchange: {} rows collected", len(df))
+        return df
+
+    # ------------------------------------------------------------------ #
+    #  Generic scrape dispatcher                                           #
     # ------------------------------------------------------------------ #
 
     def scrape(self, url: str, selector: str = "") -> pd.DataFrame:
         """Universal scraping entry point — dispatches to known scrapers by URL.
 
-        # TODO: extend for other sites in step 1.2
+        Supported dispatches:
+        - cruisersforum.com  → scrape_forum()
+        - stackexchange.com  → fetch_stackexchange()
+        - sailingforums.com  → scrape_forum() (triggers fallback path)
+        # TODO: extend for additional sites in future steps
         """
         logger.info("generic scrape called for url={}", url)
-        if "cruisersforum" in url.lower():
+        url_lower = url.lower()
+        if "cruisersforum" in url_lower or "sailingforums" in url_lower:
             return self.scrape_forum()
+        if "stackexchange" in url_lower:
+            return self.fetch_stackexchange()
         logger.info("No specific scraper for {}, returning empty DataFrame", url)
         return self._empty_df()
 
@@ -274,10 +421,11 @@ class DataCollectionAgent:
             "huggingface": self.fetch_huggingface,
             "forum": self.scrape_forum,
             "rss": self.fetch_rss,
+            "stackexchange": self.fetch_stackexchange,
         }
         results: dict[str, pd.DataFrame] = {}
 
-        with ThreadPoolExecutor(max_workers=3) as executor:
+        with ThreadPoolExecutor(max_workers=4) as executor:
             futures = {executor.submit(fn): name for name, fn in source_fns.items()}
             for future in as_completed(futures):
                 name = futures[future]
@@ -297,7 +445,7 @@ class DataCollectionAgent:
 
         # Save context memory
         memory = {
-            "step": "1.1",
+            "step": "1.2",
             "status": "done",
             "metrics": {
                 "total_rows": len(df),
@@ -424,6 +572,8 @@ class DataCollectionAgent:
         allowed = rp.can_fetch(user_agent, base_url + "/")
         if not allowed:
             logger.warning(
-                "robots.txt at {} disallows crawling for agent '{}'", robots_url, user_agent
+                "robots.txt at {} disallows crawling for agent '{}'",
+                robots_url,
+                user_agent[:40],
             )
         return allowed

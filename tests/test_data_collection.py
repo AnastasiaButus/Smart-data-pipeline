@@ -233,3 +233,74 @@ def test_run_returns_dataframe(agent: DataCollectionAgent, tmp_path: Path) -> No
     assert isinstance(result, pd.DataFrame)
     assert len(result) > 0
     assert list(result.columns) == REQUIRED_COLUMNS
+
+
+# ------------------------------------------------------------------ #
+#  13. StackExchange graceful degradation                              #
+# ------------------------------------------------------------------ #
+
+def test_stackexchange_fetch_graceful(agent: DataCollectionAgent) -> None:
+    """fetch_stackexchange() must not raise on network failure and return correct schema."""
+    import requests as req_module
+    with patch.object(req_module, "get", side_effect=req_module.RequestException("network error")):
+        result = agent.fetch_stackexchange()
+    assert isinstance(result, pd.DataFrame)
+    # On error: empty DataFrame with base columns (id added later by merge)
+    assert result.empty or set(["text", "label", "source", "collected_at"]).issubset(result.columns)
+
+
+# ------------------------------------------------------------------ #
+#  14. StackExchange calls _is_crawl_allowed first                    #
+# ------------------------------------------------------------------ #
+
+def test_stackexchange_robots_checked(agent: DataCollectionAgent) -> None:
+    """fetch_stackexchange() must call _is_crawl_allowed() before any HTTP request."""
+    calls: list[str] = []
+
+    def _mock_crawl_allowed(url: str, ua: str) -> bool:
+        calls.append(url)
+        return False  # disallow — so no HTTP requests follow
+
+    with patch.object(agent, "_is_crawl_allowed", side_effect=_mock_crawl_allowed):
+        result = agent.fetch_stackexchange()
+
+    assert len(calls) >= 1, "_is_crawl_allowed was never called"
+    assert any("stackexchange" in c for c in calls), (
+        f"Expected stackexchange URL in calls, got: {calls}"
+    )
+    assert result.empty, "Should return empty DataFrame when crawl is disallowed"
+
+
+# ------------------------------------------------------------------ #
+#  15. RSS handles 4 feeds without exception                          #
+# ------------------------------------------------------------------ #
+
+def test_rss_new_feeds(agent: DataCollectionAgent) -> None:
+    """fetch_rss() must handle the full list of 4 configured feeds without raising."""
+    import feedparser
+
+    call_count = 0
+
+    def _mock_parse(url: str, *args, **kwargs) -> MagicMock:
+        nonlocal call_count
+        call_count += 1
+        mock = MagicMock()
+        mock.bozo = False
+        entry = MagicMock()
+        entry.get = lambda k, d="": {
+            "title": f"Test sailing article {call_count}",
+            "summary": "A detailed summary about sailing and navigation techniques at sea.",
+        }.get(k, d)
+        mock.entries = [entry]
+        return mock
+
+    with patch.object(feedparser, "parse", side_effect=_mock_parse):
+        result = agent.fetch_rss()
+
+    # Config has 4 feeds — all should be called
+    rss_feeds = agent._cfg["sources"]["rss"]["feeds"]
+    assert call_count == len(rss_feeds), (
+        f"Expected {len(rss_feeds)} feed calls, got {call_count}"
+    )
+    assert isinstance(result, pd.DataFrame)
+    assert len(result) == len(rss_feeds), "Should have one entry per feed"
