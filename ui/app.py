@@ -531,6 +531,59 @@ def render_hitl_tab(all_labels: list[str]) -> None:
         file_name="review_queue.csv",
         mime="text/csv",
     )
+    st.divider()
+    st.subheader("🚀 Переобучить модель с исправлениями")
+
+    corrected_count = int(
+        review_df["corrected_label"].fillna("").astype(str).str.strip().ne("").sum()
+    )
+    st.info(f"Готово к обучению: {corrected_count} исправлений")
+
+    if st.button("🔄 Запустить переобучение", key="retrain_from_hitl_button"):
+        if not ANNOTATED_DATASET_PATH.exists():
+            st.warning("annotated.parquet не найден. Сначала выполните AnnotationAgent.")
+        else:
+            with st.spinner("Обучаю модель..."):
+                from core.model_wrapper import ModelWrapper
+
+                base_df = pd.read_parquet(ANNOTATED_DATASET_PATH)
+                corrected = review_df.loc[
+                    review_df["corrected_label"].fillna("").astype(str).str.strip().ne("")
+                ][["id", "text", "corrected_label", "source"]].rename(
+                    columns={"corrected_label": "label"}
+                )
+                corrected["confidence"] = 1.0
+                corrected["label_source"] = "hitl"
+
+                combined = pd.concat([base_df, corrected], ignore_index=True)
+                wrapper = ModelWrapper()
+                metrics = wrapper.fit(combined)
+
+            st.success("✅ Модель переобучена!")
+
+            metric_col1, metric_col2, metric_col3 = st.columns(3)
+            metric_col1.metric(
+                "Accuracy",
+                f"{metrics['accuracy']:.3f}",
+                delta=f"{metrics['accuracy'] - 0.50:+.3f} vs baseline",
+            )
+            metric_col2.metric(
+                "F1 macro",
+                f"{metrics['f1_macro']:.3f}",
+                delta=f"{metrics['f1_macro'] - 0.43:+.3f} vs baseline",
+            )
+            metric_col3.metric("N train", int(metrics.get("n_train", 0)))
+
+            st.subheader("F1 по классам")
+            fig = px.bar(
+                x=list(metrics["f1_per_class"].keys()),
+                y=list(metrics["f1_per_class"].values()),
+                labels={"x": "Класс", "y": "F1"},
+                color=list(metrics["f1_per_class"].values()),
+                color_continuous_scale="Greens",
+            )
+            fig.update_layout(showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
 
 
 def render_analytics_tab(threshold: float) -> None:
