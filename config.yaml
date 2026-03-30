@@ -93,6 +93,7 @@ active_learning:
   initial_size: 50
   batch_size: 20
   n_iterations: 5
+  compare_strategies: true
 model:
   type: sklearn
   base_model: logistic_regression

@@ -1,6 +1,6 @@
 # smart-data-pipeline
 ![WIP](https://img.shields.io/badge/status-WIP-yellow)
-![Tests](https://img.shields.io/badge/tests-75%20passed-green)
+![Tests](https://img.shields.io/badge/tests-87%20passed-green)
 ![Streamlit](https://img.shields.io/badge/UI-Streamlit-red)
 ![HITL](https://img.shields.io/badge/HITL-%E2%9C%93-brightgreen)
 ![LLM](https://img.shields.io/badge/LLM-Gemini-orange)
@@ -48,6 +48,7 @@ Edit `.env` with your API keys, then edit `config.yaml` to set your classificati
 - [x] Step 2.2: DataQualityAgent LLM skill - Gemini explains issues + recommends strategy (+2 bonus)
 - [x] Step 3.1: AnnotationAgent - zero-shot, confidence scoring, review_queue.csv (HITL ★)
 - [x] Step 3.2: Streamlit HITL dashboard - 4 tabs + report builder + Telegram export
+- [x] Step 4.1: ActiveLearningAgent - entropy/margin/random + learning curve
 
 ## Reports
 | Report | Description |
