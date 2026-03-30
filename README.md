@@ -1,6 +1,6 @@
 # smart-data-pipeline
 ![WIP](https://img.shields.io/badge/status-WIP-yellow)
-![Tests](https://img.shields.io/badge/tests-43%20passed-green)
+![Tests](https://img.shields.io/badge/tests-57%20passed-green)
 ![EDA](https://img.shields.io/badge/EDA-interactive-blue)
 ![LLM](https://img.shields.io/badge/LLM-Gemini-orange)
 ![Python](https://img.shields.io/badge/python-3.12.6-blue)
@@ -42,6 +42,7 @@ Edit `.env` with your API keys, then edit `config.yaml` to set your classificati
 - [x] Step 1.2: Scraping improvements - StackExchange API, RSS
 - [x] Step 1.3: Gemini LLM - domain reformulation, classes, fallback
 - [x] Step 1.4: EDA - 8 charts, WordCloud, LLM hypotheses
+- [x] Step 2.1: DataQualityAgent - HTML cleanup, dedup, filtering (761 rows -> 609)
 
 ## Reports
 | Report | Description |
@@ -51,10 +52,11 @@ Edit `.env` with your API keys, then edit `config.yaml` to set your classificati
 | reports/domain_reformulation.md | Domain reformulation details |
 | reports/wordcloud_all.png | WordCloud full corpus |
 | reports/wordcloud_domain.png | WordCloud domain sources only |
+| reports/quality_report.md | Before/after quality cleanup summary |
 
 ## What it looks like
 
-> EDA Report - интерактивный, открывается в браузере без сервера
+> EDA Report - interactive, opens in the browser without a server
 
 ![Dataset overview](docs/screenshots/eda_overview.png)
 ![WordCloud](docs/screenshots/eda_wordcloud.png)

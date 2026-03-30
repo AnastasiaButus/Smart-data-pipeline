@@ -103,6 +103,24 @@ llm:
   max_tokens: 1000
   temperature: 0.3
   max_prompt_chars: 2000
+quality:
+  strategy:
+    html_entities: decode
+    html_artifacts: remove
+    duplicates: drop
+    short_texts: filter
+    long_texts: truncate
+    missing: drop
+  thresholds:
+    short_text_min: 50
+    long_text_max: 1000
+  html_artifact_patterns:
+  - wp
+  - timeincuk
+  - inspirewp
+  - keyassets
+  - figcaption
+  - webfeedsfeaturedvisual
 pipeline:
   orchestrator: prefect
   save_intermediate: true
