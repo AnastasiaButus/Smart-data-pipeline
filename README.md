@@ -28,6 +28,41 @@ python pipeline/run_pipeline.py
 streamlit run ui/app.py
 ```
 
+## Data Sources
+
+| Source | Type | License/Status |
+|--------|------|----------------|
+| HuggingFace (`dair-ai/emotion`) | dataset | Apache 2.0 |
+| HuggingFace (`mteb/tweet_sentiment_extraction`) | dataset | MIT |
+| StackExchange Sailing | API | CC BY-SA 4.0 |
+| RSS feeds (`Yachting World`, `Cruising World`, `Sail Magazine`, `48 North`) | RSS scraping | editorial / educational use |
+| Sailing Forums | web scraping | robots.txt checked, educational use |
+
+## 🕷️ Scraping approach
+
+The pipeline uses ethical scraping practices:
+- `robots.txt` checked before every scrape
+- Rate limiting: `time.sleep(1)` between requests
+- User-Agent identifies the bot honestly
+- Educational/non-commercial use only
+
+**Supported scraping methods:**
+- HuggingFace datasets API (official, no limits)
+- StackExchange API (official, 300 req/day free)
+- RSS feeds (`feedparser` — standard protocol)
+- Forum scraping (`BeautifulSoup4` + `requests`)
+
+**Hidden API pattern (stub in `scrape()`):**
+Some sites expose internal REST APIs via browser Network tab. Pattern:
+1. Open DevTools → Network tab
+2. Find XHR requests with JSON responses
+3. Copy as cURL → convert to Python `requests`
+4. Add pagination support
+
+This pattern is implemented as a stub in
+`agents/data_collection_agent.py -> scrape()`
+with a TODO comment for extension.
+
 ## Data Card
 
 | Параметр | Значение |
