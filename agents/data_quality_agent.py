@@ -64,11 +64,15 @@ class DataQualityAgent:
         self._reports_path = self._project_root / "reports"
         self._clean_dataset_path = self._raw_path / "dataset_clean.parquet"
         self._quality_report_path = self._reports_path / "quality_report.md"
+        self._llm_quality_advice_path = self._reports_path / "llm_quality_advice.json"
         self._context_memory_path = self._reports_path / "context_memory.json"
         self._llm_client = GeminiLLMClient(config_path=str(self._config_path))
+        self.config = self._cfg
+        self.llm = self._llm_client
         self._last_summary: dict[str, Any] = {}
         self._last_issues: dict[str, Any] = {}
         self._last_compare: dict[str, Any] = {}
+        self._last_llm_advice: dict[str, Any] = {}
         logger.info(
             "DataQualityAgent initialized. short_text_min={}, long_text_max={}",
             self._short_text_min,
@@ -259,6 +263,39 @@ class DataQualityAgent:
         )
         return compare_report
 
+    def explain_issues(self, quality_report: dict[str, Any]) -> dict[str, Any]:
+        """Explain detected issues in Russian and recommend a cleanup strategy."""
+        topic = str(self.config.get("domain", {}).get("topic", "text classification"))
+        prompt = (
+            "You are a data quality expert. Analyze this dataset quality report and "
+            "respond in Russian. "
+            f"Dataset: {topic}. "
+            f"HTML entities: {quality_report['html_entities']['count']}; "
+            f"Short texts (<50): {quality_report['short_texts']['count']}; "
+            f"Long texts (>1000): {quality_report['long_texts']['count']}; "
+            f"Duplicates: {quality_report['duplicates']['count']}; "
+            f"HTML artifacts: {quality_report['html_artifacts']['count']}; "
+            f"Total rows: {quality_report['total_rows']}. "
+            'Return JSON only with keys: summary, top_issues, recommended_strategy, risks, confidence.'
+        )[:800]
+
+        fallback = self._fallback_quality_advice(quality_report)
+        try:
+            response = self.llm.generate_json(prompt)
+            advice = self._validate_quality_advice(response) or fallback
+        except Exception as exc:
+            logger.warning("LLM quality advice fallback used: {}", exc)
+            advice = fallback
+
+        self._last_llm_advice = advice
+        self._llm_quality_advice_path.parent.mkdir(parents=True, exist_ok=True)
+        self._llm_quality_advice_path.write_text(
+            json.dumps(advice, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        logger.info("LLM quality advice saved to {}", self._llm_quality_advice_path)
+        return advice
+
     def save_report(self, report: dict[str, Any], compare: dict[str, Any]) -> None:
         """Save a human-readable Markdown quality report."""
         self._quality_report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -328,6 +365,33 @@ class DataQualityAgent:
                 f"- Class distribution: {json.dumps(report['class_imbalance']['distribution'], ensure_ascii=False)}",
             ]
         )
+        if self._last_llm_advice:
+            lines.extend(
+                [
+                    "",
+                    "## LLM рекомендации",
+                    str(self._last_llm_advice.get("summary", "")),
+                    "",
+                    "### Топ проблемы",
+                ]
+            )
+            lines.extend(
+                f"- {issue}" for issue in self._last_llm_advice.get("top_issues", [])
+            )
+            lines.extend(["", "### Рекомендуемая стратегия"])
+            lines.extend(
+                f"- {key}: {value}"
+                for key, value in self._last_llm_advice.get(
+                    "recommended_strategy", {}
+                ).items()
+            )
+            lines.extend(["", "### Риски"])
+            lines.extend(
+                f"- {risk}" for risk in self._last_llm_advice.get("risks", [])
+            )
+            lines.append(
+                f"- confidence: {self._last_llm_advice.get('confidence', 'medium')}"
+            )
 
         self._quality_report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         logger.info("Quality report saved to {}", self._quality_report_path)
@@ -347,6 +411,7 @@ class DataQualityAgent:
         original_df = self._prepare_dataframe(df)
         strategy = dict(self._strategy)
         report = self.detect_issues(original_df)
+        advice = self.explain_issues(report)
         clean_df = self.fix(original_df, strategy)
         compare_report = self.compare(original_df, clean_df)
         self._last_summary = {
@@ -354,6 +419,7 @@ class DataQualityAgent:
             "total_after": compare_report["rows_after"],
             "issues_found": report["issues_found"],
             "strategy_used": strategy,
+            "llm_confidence": advice.get("confidence", "medium"),
         }
         self.save_report(report, compare_report)
         ContextMemory(path=str(self._context_memory_path)).update(
@@ -421,3 +487,63 @@ class DataQualityAgent:
         if len(positive_counts) == 1:
             return float(positive_counts[0])
         return round(max(positive_counts) / min(positive_counts), 2)
+
+    def _fallback_quality_advice(self, quality_report: dict[str, Any]) -> dict[str, Any]:
+        """Build deterministic Russian fallback advice for quality cleanup."""
+        total_rows = int(quality_report.get("total_rows", 0))
+        html_count = int(quality_report.get("html_entities", {}).get("count", 0))
+        short_count = int(quality_report.get("short_texts", {}).get("count", 0))
+        return {
+            "summary": (
+                f"Датасет содержит {total_rows} строк. Основные проблемы: HTML-артефакты"
+                " в RSS и короткие тексты в форумах."
+            ),
+            "top_issues": [
+                f"HTML entities в {html_count} строках — декодирование обязательно",
+                f"Короткие тексты ({short_count} строк) — содержат мало информации для классификации",
+                "Длинные тексты из RSS содержат HTML-разметку",
+            ],
+            "recommended_strategy": {
+                "html_entities": "decode — очищает текст от служебных символов",
+                "duplicates": "drop — дубли не добавляют новой информации",
+                "short_texts": "filter — тексты <50 символов ненадёжны для классификации",
+                "long_texts": "truncate — сохраняем данные, обрезаем до 1000 символов",
+            },
+            "risks": [
+                "Потеря 20% данных после фильтрации — особенно тематических sailingforums",
+                "HuggingFace источники нетематические — риск смещения модели",
+            ],
+            "confidence": "medium",
+        }
+
+    @staticmethod
+    def _validate_quality_advice(advice: Any) -> dict[str, Any] | None:
+        """Validate LLM quality advice shape before saving it."""
+        if not isinstance(advice, dict):
+            return None
+        required_keys = {
+            "summary",
+            "top_issues",
+            "recommended_strategy",
+            "risks",
+            "confidence",
+        }
+        if not required_keys.issubset(advice.keys()):
+            return None
+        if not isinstance(advice.get("top_issues"), list):
+            return None
+        if not isinstance(advice.get("recommended_strategy"), dict):
+            return None
+        if not isinstance(advice.get("risks"), list):
+            return None
+        return {
+            "summary": str(advice.get("summary", "")).strip(),
+            "top_issues": [str(item).strip() for item in advice.get("top_issues", []) if str(item).strip()],
+            "recommended_strategy": {
+                str(key): str(value).strip()
+                for key, value in advice.get("recommended_strategy", {}).items()
+                if str(value).strip()
+            },
+            "risks": [str(item).strip() for item in advice.get("risks", []) if str(item).strip()],
+            "confidence": str(advice.get("confidence", "medium")).strip() or "medium",
+        }

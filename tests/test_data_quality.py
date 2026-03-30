@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -134,6 +135,7 @@ def test_agent_initializes(temp_project: Path) -> None:
     assert agent._short_text_min == 50
     assert agent._long_text_max == 1000
     assert agent._llm_client is not None
+    assert agent.llm is not None
 
 
 def test_detect_issues_finds_html_entities(temp_project: Path) -> None:
@@ -359,3 +361,79 @@ def test_summary_no_raw_data(temp_project: Path, sample_df: pd.DataFrame) -> Non
 
     assert {"texts", "rows", "data"}.isdisjoint(summary.keys())
     assert "wp-content attachment-medium artifacts" not in encoded
+
+
+def test_explain_issues_returns_dict(
+    temp_project: Path, sample_df: pd.DataFrame, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """LLM advice should return a validated dict when Gemini JSON is mocked."""
+    agent = _make_agent(temp_project)
+    quality_report = agent.detect_issues(sample_df)
+    monkeypatch.setattr(
+        agent.llm,
+        "generate_json",
+        lambda prompt: {
+            "summary": "Качество данных среднее, но проблемы хорошо локализованы.",
+            "top_issues": ["HTML entities", "Короткие тексты", "HTML artifacts"],
+            "recommended_strategy": {
+                "html_entities": "decode — это очистит текст",
+                "duplicates": "drop — повторы мешают",
+                "short_texts": "filter — мало сигнала",
+                "long_texts": "truncate — сохраняем смысл",
+            },
+            "risks": ["Риск потери части данных", "Риск смещения модели"],
+            "confidence": "high",
+        },
+    )
+
+    advice = agent.explain_issues(quality_report)
+
+    assert isinstance(advice, dict)
+    assert {"summary", "top_issues", "recommended_strategy"} <= advice.keys()
+
+
+def test_explain_issues_fallback(
+    temp_project: Path, sample_df: pd.DataFrame, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fallback advice should be returned when Gemini JSON generation fails."""
+    agent = _make_agent(temp_project)
+    quality_report = agent.detect_issues(sample_df)
+
+    def _raise(_: str) -> dict[str, Any]:
+        raise Exception("gemini unavailable")
+
+    monkeypatch.setattr(agent.llm, "generate_json", _raise)
+
+    advice = agent.explain_issues(quality_report)
+
+    assert isinstance(advice, dict)
+    assert "summary" in advice
+    assert advice["confidence"] == "medium"
+
+
+def test_explain_issues_saves_json(
+    temp_project: Path, sample_df: pd.DataFrame, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Advice generation should save reports/llm_quality_advice.json."""
+    agent = _make_agent(temp_project)
+    quality_report = agent.detect_issues(sample_df)
+    monkeypatch.setattr(
+        agent.llm,
+        "generate_json",
+        lambda prompt: {
+            "summary": "Сводка по качеству данных.",
+            "top_issues": ["HTML entities", "Короткие тексты", "Длинные тексты"],
+            "recommended_strategy": {
+                "html_entities": "decode",
+                "duplicates": "drop",
+                "short_texts": "filter",
+                "long_texts": "truncate",
+            },
+            "risks": ["Риск потери части данных"],
+            "confidence": "medium",
+        },
+    )
+
+    agent.explain_issues(quality_report)
+
+    assert (temp_project / "reports" / "llm_quality_advice.json").exists()

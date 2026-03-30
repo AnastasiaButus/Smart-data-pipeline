@@ -1,6 +1,6 @@
 # smart-data-pipeline
 ![WIP](https://img.shields.io/badge/status-WIP-yellow)
-![Tests](https://img.shields.io/badge/tests-57%20passed-green)
+![Tests](https://img.shields.io/badge/tests-60%20passed-green)
 ![EDA](https://img.shields.io/badge/EDA-interactive-blue)
 ![LLM](https://img.shields.io/badge/LLM-Gemini-orange)
 ![Python](https://img.shields.io/badge/python-3.12.6-blue)
@@ -43,6 +43,7 @@ Edit `.env` with your API keys, then edit `config.yaml` to set your classificati
 - [x] Step 1.3: Gemini LLM - domain reformulation, classes, fallback
 - [x] Step 1.4: EDA - 8 charts, WordCloud, LLM hypotheses
 - [x] Step 2.1: DataQualityAgent - HTML cleanup, dedup, filtering (761 rows -> 609)
+- [x] Step 2.2: DataQualityAgent LLM skill - Gemini explains issues + recommends strategy (+2 bonus)
 
 ## Reports
 | Report | Description |
