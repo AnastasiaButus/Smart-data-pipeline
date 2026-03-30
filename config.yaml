@@ -1,81 +1,104 @@
 project:
   name: smart-data-pipeline
-  version: "0.1.0"
-  description: "Configurable text classification pipeline"
-
+  version: 0.1.0
+  description: Configurable text classification pipeline
 domain:
-  topic: "sailing and yacht navigation"
+  topic: sailing and yacht navigation
+  normalized_topic: sailing and yacht navigation
   classes:
-    - navigation
-    - safety
-    - equipment
-    - weather
-    - licensing
-  language: "en"
-
+  - navigation
+  - safety
+  - equipment
+  - weather
+  - licensing
+  keywords_by_class:
+    navigation:
+    - route planning
+    - waypoint
+    - chartplotter
+    - tide
+    - course
+    safety:
+    - life jacket
+    - colregs
+    - man overboard
+    - distress
+    - watchkeeping
+    equipment:
+    - rigging
+    - anchor
+    - engine
+    - electronics
+    - maintenance
+    weather:
+    - forecast
+    - wind
+    - storm
+    - barometer
+    - sea state
+    licensing:
+    - regulation
+    - certificate
+    - compliance
+    - exam
+    - radio license
+  review_label: other_or_offtopic
+  language: en
 sources:
   huggingface:
     datasets:
-      - name: "dair-ai/emotion"
-        split: "train"
-        text_column: "text"
-        limit: 300
-      - name: "mteb/tweet_sentiment_extraction"
-        split: "test"
-        text_column: "text"
-        limit: 300
+    - name: dair-ai/emotion
+      split: train
+      text_column: text
+      limit: 300
+    - name: mteb/tweet_sentiment_extraction
+      split: test
+      text_column: text
+      limit: 300
     enabled: true
-
   scraping:
     cruisers_forum:
-      base_url: "https://www.cruisersforum.com"
+      base_url: https://www.cruisersforum.com
       sections:
-        - "/forums/f19/"
-        - "/forums/f4/"
+      - /forums/f19/
+      - /forums/f4/
       pages_per_section: 3
       enabled: true
     enabled: true
-
   rss:
     feeds:
-      - "https://www.yachtingworld.com/feed"
-      - "https://www.cruisingworld.com/feed/"
-      - "https://www.sailmagazine.com/feed"
-      - "https://www.48north.com/feed/"
+    - https://www.yachtingworld.com/feed
+    - https://www.cruisingworld.com/feed/
+    - https://www.sailmagazine.com/feed
+    - https://www.48north.com/feed/
     enabled: true
-
   stackexchange:
-    api_url: "https://api.stackexchange.com/2.3/questions"
-    site: "outdoors"
-    tag: "sailing"
+    api_url: https://api.stackexchange.com/2.3/questions
+    site: outdoors
+    tag: sailing
     pages: 5
     enabled: true
-
 data:
-  raw_path: "data/raw"
-  labeled_path: "data/labeled"
-  review_queue_path: "data/review_queue.csv"
-
+  raw_path: data/raw
+  labeled_path: data/labeled
+  review_queue_path: data/review_queue.csv
 annotation:
   confidence_threshold: 0.7
-  model: "zero-shot"
-
+  model: zero-shot
 active_learning:
-  strategy: "entropy"
+  strategy: entropy
   initial_size: 50
   batch_size: 20
   n_iterations: 5
-
 model:
-  type: "sklearn"
-  base_model: "logistic_regression"
-
+  type: sklearn
+  base_model: logistic_regression
 llm:
-  provider: "gemini"
-  model: "gemini-1.5-flash"
+  provider: gemini
+  model: gemini-1.5-flash
   max_tokens: 1000
   temperature: 0.3
-
+  max_prompt_chars: 2000
 pipeline:
-  orchestrator: "prefect"
+  orchestrator: prefect
   save_intermediate: true
