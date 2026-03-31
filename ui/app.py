@@ -1573,52 +1573,90 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
                 st.code(str(notice["details"]))
 
     if not status["is_fresh"]:
-        st.warning(
-            "Для новой темы ещё нет свежих артефактов. "
-            f"Сейчас на диске данные для темы: **{status['artifact_topic'] or 'неизвестно'}**."
-        )
-        st.info(
-            "После смены темы pipeline должен быть прогнан заново, "
-            "чтобы обновились тексты, review queue, аналитика и чат."
-        )
-        action_col1, action_col2 = st.columns([1, 1])
-        if action_col1.button(
-            "▶ Запустить pipeline для этой темы",
-            type="primary",
-            key="run_pipeline_from_onboarding",
-        ):
-            run_pipeline_for_current_topic()
-            return
-        with action_col2:
-            st.code("python pipeline/run_pipeline.py")
-        if st.session_state.get("auto_run_pipeline_pending", False):
-            st.info("Тема изменена — автоматически запускаю pipeline. Это может занять несколько минут.")
-            run_pipeline_for_current_topic()
-            return
-
-    if st.session_state.get("topic") and not st.session_state.get("editing_topic", False):
-        st.subheader("Текущая конфигурация домена")
-        st.write(f"**Тема:** {st.session_state.get('topic')}")
-        st.write("**Классы:** " + ", ".join(st.session_state.get("current_classes", [])))
-        if st.button("Изменить тему", key="change_topic_button"):
-            st.session_state["editing_topic"] = True
-            st.rerun()
-        if st.session_state.get("selected_sources"):
-            st.success(
-                "Выбраны источники: "
-                + ", ".join(st.session_state.get("selected_sources", []))
+        with st.container(border=True):
+            st.markdown("### 🔄 Нужно обновить данные под новую тему")
+            st.markdown(
+                f"Сейчас выбрана тема **{current_topic}**, "
+                f"но на диске пока лежат артефакты для темы **{status['artifact_topic'] or 'неизвестно'}**."
+            )
+            st.caption(
+                "Это нормально после смены темы: сначала нужно заново собрать тексты, "
+                "разметить их и построить новую review queue."
             )
 
-    st.subheader("Введите тему для классификации текстов")
-    st.info(
-        f"🎯 Текущая тема: **{current_topic}**  \n"
-        "Чтобы изменить — нажмите "
-        "**'✏️ Изменить тему'** в боковой панели слева."
-    )
+            step_col1, step_col2, step_col3 = st.columns(3)
+            with step_col1:
+                st.markdown("**1. Тема**")
+                st.caption(f"Выбрана: {current_topic}")
+            with step_col2:
+                st.markdown("**2. Обновление данных**")
+                st.caption("Нужно один раз прогнать pipeline")
+            with step_col3:
+                st.markdown("**3. Результат**")
+                st.caption("После этого оживут HITL, аналитика и чат")
+
+            action_col1, action_col2 = st.columns([1.4, 1])
+            with action_col1:
+                if st.button(
+                    "▶ Обновить данные для этой темы",
+                    type="primary",
+                    key="run_pipeline_from_onboarding",
+                    use_container_width=True,
+                ):
+                    with st.spinner("Запускаю pipeline. Это может занять несколько минут..."):
+                        run_pipeline_for_current_topic()
+                    return
+            with action_col2:
+                st.markdown("**Если хочешь вручную**")
+                with st.expander("Показать команду"):
+                    st.code("python pipeline/run_pipeline.py")
+
+        if st.session_state.get("auto_run_pipeline_pending", False):
+            st.info(
+                "Тема изменена — автоматически обновляю данные. "
+                "Подожди немного: после завершения здесь появится результат."
+            )
+            with st.spinner("Автоматически запускаю pipeline для новой темы..."):
+                run_pipeline_for_current_topic()
+            return
+
+    st.subheader("Шаг 1. Проверьте тему и классы")
+    with st.container(border=True):
+        summary_col1, summary_col2 = st.columns([1.2, 1.8])
+        with summary_col1:
+            st.markdown(f"**🎯 Тема:** `{current_topic}`")
+            data_status_text = "Свежие данные готовы" if status["is_fresh"] else "Нужно обновить данные"
+            data_status_kind = "🟢" if status["is_fresh"] else "🟡"
+            st.caption(f"{data_status_kind} {data_status_text}")
+        with summary_col2:
+            classes_preview = ", ".join(st.session_state.get("current_classes", []))
+            st.markdown(f"**🏷️ Классы:** {classes_preview}")
+
+        helper_col1, helper_col2 = st.columns([1, 2])
+        with helper_col1:
+            if st.button("Изменить тему", key="change_topic_button"):
+                st.session_state["editing_topic"] = True
+                st.rerun()
+        with helper_col2:
+            st.caption(
+                "Если тема не подходит, нажми **✏️ Изменить тему** в боковой панели. "
+                "Классы можно обновить кнопкой **🔄 Обновить классы через LLM** или поправить вручную."
+            )
+
+    if st.session_state.get("selected_sources"):
+        st.success(
+            "Выбраны источники: "
+            + ", ".join(st.session_state.get("selected_sources", []))
+        )
 
     if "selected_items" not in st.session_state:
         st.session_state["selected_items"] = {}
 
+    st.subheader("Шаг 2. Подберите источники данных")
+    st.caption(
+        "Нажми кнопку ниже, чтобы подобрать источники под текущую тему, "
+        "или используй уже предложенный набор и отметь нужные чекбоксами."
+    )
     if st.button("🔍 Найти источники данных", key="find_sources_button"):
         with st.spinner("Gemini ищет источники..."):
             suggestion_payload = find_sources_with_llm(current_topic, llm_client)
