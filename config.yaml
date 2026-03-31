@@ -57,16 +57,17 @@ sources:
       limit: 300
     enabled: true
   kaggle:
-    enabled: true
+    enabled: false
+    note: Current datasets are numeric/categorical, not text. Enable when text datasets found.
     datasets:
     - ref: opendatasource/sailing-boats
       text_column: null
       limit: 200
-      enabled: true
+      enabled: false
     - ref: cwiloc/climate-data-from-ocean-ships
       text_column: null
       limit: 200
-      enabled: true
+      enabled: false
   scraping:
     cruisers_forum:
       base_url: https://www.cruisersforum.com

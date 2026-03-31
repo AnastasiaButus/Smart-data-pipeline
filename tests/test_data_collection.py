@@ -317,3 +317,29 @@ def test_kaggle_fetch_graceful(agent: DataCollectionAgent, monkeypatch: pytest.M
     assert isinstance(result, pd.DataFrame)
     assert result.empty
     assert list(result.columns) == REQUIRED_COLUMNS
+
+
+def test_is_text_column_detects_text(agent: DataCollectionAgent) -> None:
+    """_is_text_column() should accept long free-form sailing texts."""
+    series = pd.Series(
+        [
+            "This is a long sailing text about navigation and coastal passage planning.",
+            "Another long text about yachts and boats with enough descriptive detail.",
+        ]
+    )
+    assert agent._is_text_column(series) is True
+
+
+def test_is_text_column_rejects_ids(agent: DataCollectionAgent) -> None:
+    """_is_text_column() should reject short code-like identifiers."""
+    series = pd.Series(["MNM", "ABC", "XYZ", "QRS"])
+    assert agent._is_text_column(series) is False
+
+
+def test_kaggle_disabled_returns_empty(agent: DataCollectionAgent, monkeypatch: pytest.MonkeyPatch) -> None:
+    """fetch_kaggle() should return an empty DataFrame when source is disabled in config."""
+    monkeypatch.setitem(agent.config["sources"]["kaggle"], "enabled", False)
+    result = agent.fetch_kaggle()
+    assert isinstance(result, pd.DataFrame)
+    assert result.empty
+    assert list(result.columns) == REQUIRED_COLUMNS

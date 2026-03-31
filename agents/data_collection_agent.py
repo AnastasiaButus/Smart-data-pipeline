@@ -36,6 +36,7 @@ class DataCollectionAgent:
         self._config_path = Path(config_path)
         with open(self._config_path) as fh:
             self._cfg = yaml.safe_load(fh)
+        self.config = self._cfg
         self._raw_path = Path(self._cfg["data"]["raw_path"])
         self._raw_path.mkdir(parents=True, exist_ok=True)
         self._reports_path = Path("reports")
@@ -361,10 +362,10 @@ class DataCollectionAgent:
         import zipfile  # noqa: F401
         from glob import glob
 
-        kaggle_cfg = self._cfg.get("sources", {}).get("kaggle", {})
-        if not kaggle_cfg.get("enabled", True):
+        if not self.config.get("sources", {}).get("kaggle", {}).get("enabled", False):
             logger.info("Kaggle source disabled in config")
             return self._empty_df()
+        kaggle_cfg = self.config.get("sources", {}).get("kaggle", {})
 
         token = os.getenv("KAGGLE_API_TOKEN", "")
         if not token:
@@ -396,9 +397,13 @@ class DataCollectionAgent:
                             df_raw = pd.read_csv(csv_path, nrows=ds.get("limit", 200))
                             text_col = ds.get("text_column")
                             if not text_col:
-                                str_cols = df_raw.select_dtypes(include="object").columns
+                                str_cols = [
+                                    col
+                                    for col in df_raw.select_dtypes(include="object").columns
+                                    if self._is_text_column(df_raw[col])
+                                ]
                                 text_col = str_cols[0] if len(str_cols) > 0 else None
-                            if text_col and text_col in df_raw.columns:
+                            if text_col and text_col in df_raw.columns and self._is_text_column(df_raw[text_col]):
                                 slug = ds["ref"].split("/")[-1]
                                 df_out = pd.DataFrame(
                                     {
@@ -411,6 +416,8 @@ class DataCollectionAgent:
                                 df_out["id"] = [str(uuid.uuid4()) for _ in range(len(df_out))]
                                 all_dfs.append(df_out[self._COLUMNS])
                                 logger.info("Kaggle {}: {} rows", ds["ref"], len(df_out))
+                            else:
+                                logger.warning("Kaggle {} has no suitable text column", ds["ref"])
                 except Exception as exc:
                     logger.warning("Kaggle {} failed: {}", ds.get("ref", "unknown"), exc)
                     continue
@@ -629,6 +636,15 @@ class DataCollectionAgent:
     def _empty_df(self) -> pd.DataFrame:
         """Return an empty DataFrame with the required schema."""
         return pd.DataFrame(columns=self._COLUMNS)
+
+    def _is_text_column(self, series: pd.Series) -> bool:
+        """Heuristically detect whether a column contains free-form text."""
+        sample = series.dropna().head(20).astype(str)
+        if sample.empty:
+            return False
+        avg_len = sample.str.len().mean()
+        unique_ratio = series.nunique(dropna=True) / max(len(series), 1)
+        return bool(avg_len > 20 and unique_ratio > 0.3)
 
     def _is_crawl_allowed(self, base_url: str, user_agent: str) -> bool:
         """Check robots.txt for the given base URL and user agent string."""

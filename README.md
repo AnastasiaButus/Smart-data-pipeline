@@ -70,6 +70,7 @@ with a TODO comment for extension.
 |----------|----------|
 | Домен | Sailing & yacht navigation |
 | Язык | English |
+| Модальность | Текст · мультимодальность запланирована |
 | Источников | 8 (HF, StackExchange, RSS, форумы) |
 | Строк собрано | 761 |
 | Строк после чистки | 609 |
@@ -144,6 +145,14 @@ Streamlit is the UI layer for HITL review, analytics, reporting, and chat with p
 - `skip_hitl` и `skip_al` позволяют пропускать тяжёлые шаги
 - `ContextMemory` сохраняет результаты каждого этапа
 - Graceful degradation не даёт пайплайну падать из-за внешних зависимостей
+
+## 🔮 Roadmap
+- **Multimodal support** — images + text (planned)
+- **Audio modality** — speech via Whisper (planned)
+- **Tabular + text fusion** — Kaggle structured datasets aligned with text sources (planned)
+- **DistilBERT upgrade** — transformer classifier (stub ready in `model_wrapper.py`)
+- **PDF / Notion export** — report formats (planned)
+- **Hidden API scraping** — browser Network tab pattern (stub in `scrape()` method)
 
 ## Pipeline Steps
 

@@ -1706,17 +1706,6 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
 
     suggestions = st.session_state.get("source_suggestions", [])
     if suggestions:
-        df_sources = normalize_source_suggestions(suggestions).drop(
-            columns=["URL"],
-            errors="ignore",
-        )
-        st.dataframe(df_sources, use_container_width=True, hide_index=True)
-        st.caption(
-            "✅ Свободно — официальный API или открытая лицензия  |  "
-            "⚠️ С оговорками — robots.txt разрешает, лицензия неявная  |  "
-            "🚫 Ограничено — запрещено ToS или robots.txt"
-        )
-
         sources_detail = build_sources_detail(suggestions)
         if len(sources_detail) > 5:
             # TODO: пагинация при большом количестве дополнительных источников
@@ -1740,6 +1729,12 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
                 st.caption(source_data["description"])
                 if source_name == "HuggingFace datasets":
                     st.warning("⚠️ Эти датасеты общетематические (эмоции, твиты) — не специфичны для яхтинга. Они дают объём, но 76% текстов нетематические.")
+                if source_name == "Kaggle datasets":
+                    st.warning(
+                        "⚠️ Текущие Kaggle датасеты содержат числовые данные, не тексты. "
+                        "Источник отключён. Для активации найдите текстовый датасет на "
+                        "kaggle.com и добавьте в config.yaml"
+                    )
 
                 for item in source_data["items"]:
                     item_key = f"{source_name}_{item['name']}"
