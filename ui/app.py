@@ -420,9 +420,6 @@ def render_sidebar(llm_client: GeminiLLMClient) -> float:
                 "topic", "sailing and yacht navigation")),
         key="sidebar_topic",
     )
-    if topic_value != st.session_state.get("saved_topic", topic_value):
-        st.session_state["saved_topic"] = topic_value
-        st.rerun()
     st.session_state["topic"] = topic_value.strip()
 
     if st.sidebar.button("🔄 Обновить классы через LLM", use_container_width=True):
