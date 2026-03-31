@@ -1286,25 +1286,6 @@ def build_sources_detail(sources_data: list[Any]) -> dict[str, Any]:
         },
     }
 
-    normalized = normalize_source_suggestions(sources_data)
-    known_names = set(details.keys())
-    extras = normalized.loc[~normalized["Источник"].isin(known_names)].copy()
-    if not extras.empty:
-        details["Дополнительные LLM-источники"] = {
-            "description": "Дополнительные источники, предложенные Gemini",
-            "license": "зависит от источника",
-            "risk": "⚠️ С оговорками",
-            "items": [
-                {
-                    "name": str(row["Источник"]),
-                    "url": str(row.get("URL", "")).strip(),
-                    "rows": row["Строк (ориентир)"],
-                    "enabled": True,
-                }
-                for _, row in extras.iterrows()
-            ],
-        }
-
     return details
 
 
@@ -1603,25 +1584,6 @@ def build_sources_detail(sources_data: list[Any]) -> dict[str, Any]:
         },
     }
 
-    normalized = normalize_source_suggestions(sources_data)
-    known_names = set(details.keys())
-    extras = normalized.loc[~normalized["Источник"].isin(known_names)].copy()
-    if not extras.empty:
-        details["Дополнительные LLM-источники"] = {
-            "description": "Дополнительные источники, предложенные Gemini",
-            "license": "зависит от источника",
-            "risk": "⚠️ С оговорками",
-            "items": [
-                {
-                    "name": str(row["Источник"]),
-                    "url": str(row.get("URL", "")).strip(),
-                    "rows": row["Строк (ориентир)"],
-                    "enabled": True,
-                }
-                for _, row in extras.iterrows()
-            ],
-        }
-
     return details
 
 
@@ -1700,6 +1662,8 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
 
             with st.expander(f"{risk_icon} **{source_name}** — {source_data['license']}"):
                 st.caption(source_data["description"])
+                if source_name == "HuggingFace datasets":
+                    st.warning("⚠️ Эти датасеты общетематические (эмоции, твиты) — не специфичны для яхтинга. Они дают объём, но 76% текстов нетематические.")
 
                 for item in source_data["items"]:
                     item_key = f"{source_name}_{item['name']}"
