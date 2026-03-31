@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote_plus
 
 import pandas as pd
 import plotly.express as px
@@ -94,6 +96,74 @@ def clear_topic_source_state() -> None:
     st.session_state.pop("confirmed_sources", None)
 
 
+def is_sailing_topic(topic: str) -> bool:
+    """Return True when the topic belongs to the sailing/yachting domain."""
+    topic_lower = str(topic or "").lower()
+    return any(
+        keyword in topic_lower
+        for keyword in [
+            "sail",
+            "yacht",
+            "boat",
+            "ship",
+            "marine",
+            "nautical",
+            "ocean",
+            "sea",
+            "naval",
+        ]
+    )
+
+
+def fallback_classes_for_topic(topic: str) -> list[str]:
+    """Return topic-aware fallback classes when LLM output is unavailable."""
+    topic_lower = str(topic or "").lower()
+    mappings = [
+        (
+            ["sail", "yacht", "boat", "ship", "marine", "nautical", "ocean", "sea", "naval"],
+            ["navigation", "safety", "equipment", "weather", "licensing"],
+        ),
+        (["minecraft", "game", "gaming"], ["survival", "building", "redstone", "combat", "exploration"]),
+        (
+            ["medical", "health", "doctor", "disease", "hospital", "pharma"],
+            ["diagnosis", "symptoms", "treatment", "medication", "prevention"],
+        ),
+        (
+            ["legal", "law", "court", "judge", "lawyer"],
+            ["contracts", "compliance", "litigation", "regulation", "case_law"],
+        ),
+        (
+            ["food", "cook", "recipe", "restaurant", "cuisine", "chef"],
+            ["ingredients", "recipes", "cooking_methods", "nutrition", "restaurants"],
+        ),
+        (
+            ["finance", "stock", "crypto", "invest", "trading", "bank"],
+            ["markets", "investing", "risk", "regulation", "analysis"],
+        ),
+        (
+            ["tech", "software", "code", "program", "computer", "ai", "ml"],
+            ["development", "architecture", "debugging", "deployment", "models"],
+        ),
+    ]
+    for keywords, classes in mappings:
+        if any(keyword in topic_lower for keyword in keywords):
+            return classes
+
+    tokens = [
+        re.sub(r"[^a-z0-9]+", "", token.lower())
+        for token in topic_lower.split()
+        if re.sub(r"[^a-z0-9]+", "", token.lower())
+    ]
+    base = tokens[0] if tokens else "topic"
+    return [
+        f"{base}_basics",
+        f"{base}_tools",
+        f"{base}_workflows",
+        f"{base}_issues",
+        f"{base}_advanced",
+    ]
+
+
 def read_parquet_safe(path: Path) -> pd.DataFrame:
     """Read parquet safely and return an empty dataframe on failure."""
     if not path.exists():
@@ -129,6 +199,22 @@ def init_state() -> None:
         for item in domain.get("classes", [])
         if str(item).strip()
     ]
+    sailing_default_classes = [
+        "navigation",
+        "safety",
+        "equipment",
+        "weather",
+        "licensing",
+    ]
+    topic_default_classes = fallback_classes_for_topic(topic) if topic else []
+    if (
+        topic
+        and not is_sailing_topic(topic)
+        and classes == sailing_default_classes
+        and topic_default_classes
+    ):
+        classes = topic_default_classes
+        persist_domain_settings(classes=classes)
 
     st.session_state.setdefault("topic", topic)
     st.session_state.setdefault("current_topic", topic)
@@ -201,7 +287,18 @@ def topic_dialog():
                 previous_topic = str(st.session_state.get("topic", "")).strip()
                 if normalized_topic != previous_topic:
                     clear_topic_source_state()
-                persist_domain_settings(topic=normalized_topic)
+                    default_classes = fallback_classes_for_topic(normalized_topic)
+                    st.session_state["current_classes"] = default_classes
+                    st.session_state["source_suggestions"] = heuristic_source_suggestions(
+                        normalized_topic
+                    ).get("sources", [])
+                    st.session_state.pop("classes_text_synced_from_classes", None)
+                    persist_domain_settings(
+                        topic=normalized_topic,
+                        classes=default_classes,
+                    )
+                else:
+                    persist_domain_settings(topic=normalized_topic)
                 st.session_state["topic"] = normalized_topic
                 st.session_state["current_topic"] = normalized_topic
                 st.session_state["last_saved_topic"] = normalized_topic
@@ -268,35 +365,84 @@ def compute_review_impact(threshold: float) -> tuple[int, float]:
 def heuristic_source_suggestions(topic: str) -> dict[str, Any]:
     """Return fallback source suggestions in Russian for onboarding."""
     safe_topic = topic or "text classification"
+    if is_sailing_topic(safe_topic):
+        return {
+            "sources": [
+                {
+                    "name": "StackExchange / форумы",
+                    "type": "Q&A / forum",
+                    "url": "https://api.stackexchange.com",
+                    "license": "CC BY-SA 4.0",
+                    "estimated_rows": 100,
+                    "risk_level": "low",
+                },
+                {
+                    "name": "RSS отраслевых медиа",
+                    "type": "RSS",
+                    "url": "https://www.yachtingworld.com/feed",
+                    "license": "editorial use",
+                    "estimated_rows": 40,
+                    "risk_level": "medium",
+                },
+                {
+                    "name": "HuggingFace dataset",
+                    "type": "dataset",
+                    "url": "https://huggingface.co/datasets",
+                    "license": "depends on dataset",
+                    "estimated_rows": 200,
+                    "risk_level": "low",
+                },
+            ],
+            "hf_datasets": [f"{safe_topic} classification dataset"],
+            "suggested_classes": fallback_classes_for_topic(safe_topic),
+        }
+
+    encoded_topic = quote_plus(safe_topic)
     return {
         "sources": [
             {
-                "name": "StackExchange / форумы",
-                "type": "Q&A / forum",
-                "url": "https://api.stackexchange.com",
-                "license": "CC BY-SA 4.0",
-                "estimated_rows": 100,
-                "risk_level": "low",
-            },
-            {
-                "name": "RSS отраслевых медиа",
-                "type": "RSS",
-                "url": "https://www.yachtingworld.com/feed",
-                "license": "editorial use",
-                "estimated_rows": 40,
-                "risk_level": "medium",
-            },
-            {
-                "name": "HuggingFace dataset",
+                "name": f"HuggingFace datasets: {safe_topic}",
                 "type": "dataset",
-                "url": "https://huggingface.co/datasets",
+                "url": f"https://huggingface.co/datasets?search={encoded_topic}",
                 "license": "depends on dataset",
                 "estimated_rows": 200,
                 "risk_level": "low",
             },
+            {
+                "name": f"StackExchange / forums: {safe_topic}",
+                "type": "Q&A / forum",
+                "url": f"https://stackexchange.com/search?q={encoded_topic}",
+                "license": "CC BY-SA 4.0",
+                "estimated_rows": 80,
+                "risk_level": "low",
+            },
+            {
+                "name": f"Reddit / communities: {safe_topic}",
+                "type": "forum",
+                "url": f"https://www.reddit.com/search/?q={encoded_topic}",
+                "license": "depends on source",
+                "estimated_rows": 120,
+                "risk_level": "medium",
+            },
+            {
+                "name": f"News / blogs: {safe_topic}",
+                "type": "media",
+                "url": f"https://www.google.com/search?q={encoded_topic}+blog",
+                "license": "depends on source",
+                "estimated_rows": 40,
+                "risk_level": "medium",
+            },
+            {
+                "name": f"Documentation / references: {safe_topic}",
+                "type": "docs",
+                "url": f"https://www.google.com/search?q={encoded_topic}+documentation",
+                "license": "depends on source",
+                "estimated_rows": 50,
+                "risk_level": "medium",
+            },
         ],
         "hf_datasets": [f"{safe_topic} classification dataset"],
-        "suggested_classes": st.session_state.get("current_classes", []),
+        "suggested_classes": fallback_classes_for_topic(safe_topic),
     }
 
 
@@ -357,41 +503,46 @@ def get_topic_emoji(topic: str) -> str:
 
 
 def update_classes_with_llm(llm_client: GeminiLLMClient) -> None:
-    """Refresh recommended classes from the current dataset summary."""
-    dataset_df = get_best_dataset()
-    topic = st.session_state.get("topic", "")
-    current_classes = [
-        label
-        for label in st.session_state.get("current_classes", [])
-        if label != st.session_state.get("review_label")
-    ]
-    if dataset_df.empty:
-        summary = {
-            "total_rows": 0,
-            "source_distribution": {},
-            "top_keywords_global": [],
-            "pct_short_texts": 0.0,
-            "pct_long_texts": 0.0,
-            "current_topic": topic,
-            "current_classes": current_classes,
-        }
-    else:
-        summary = llm_client.build_dataset_summary(dataset_df)
-        summary["current_topic"] = topic or summary.get("current_topic", "")
-        summary["current_classes"] = current_classes
+    """Refresh recommended classes from the current topic, not the legacy dataset domain."""
+    topic = str(st.session_state.get("topic", "")).strip()
+    if not topic:
+        st.sidebar.warning("Сначала задайте тему классификации.")
+        return
 
-    spec = llm_client.generate_domain_spec(
-        topic=topic or str(summary.get("current_topic", "")),
-        dataset_summary=summary,
-        current_classes=current_classes,
-    )
-    st.session_state["current_classes"] = spec.get("recommended_classes", current_classes)
-    st.session_state["review_label"] = spec.get(
-        "review_label",
-        st.session_state.get("review_label", "other_or_offtopic"),
-    )
-    st.session_state["last_domain_spec"] = spec
-    logger.info("Классы обновлены через LLM: {}", st.session_state["current_classes"])
+    fallback_classes = fallback_classes_for_topic(topic)
+    prompt = (
+        "JSON only. Return keys: classes, review_label, notes. "
+        f'For topic "{topic}" propose exactly 5 short lowercase English class labels '
+        "for text classification. Use snake_case labels, 1-3 words each. "
+        "Classes must match the new topic itself, not any previous domain or dataset. "
+        "Avoid generic labels like misc, general, other. "
+        'Set review_label to "other_or_offtopic".'
+    )[:800]
+
+    result = llm_client.generate_json(prompt)
+    proposed_classes: list[str] = []
+    for item in result.get("classes") or result.get("suggested_classes") or []:
+        class_name = re.sub(r"\s+", "_", str(item).strip().lower())
+        if class_name and class_name not in proposed_classes:
+            proposed_classes.append(class_name)
+
+    if len(proposed_classes) < 5:
+        proposed_classes = fallback_classes
+    else:
+        proposed_classes = proposed_classes[:5]
+
+    review_label = str(result.get("review_label", "other_or_offtopic")).strip() or "other_or_offtopic"
+    st.session_state["current_classes"] = proposed_classes
+    st.session_state["review_label"] = review_label
+    st.session_state.pop("classes_text_synced_from_classes", None)
+    persist_domain_settings(classes=proposed_classes)
+    st.session_state["last_domain_spec"] = {
+        "normalized_topic": topic,
+        "recommended_classes": proposed_classes,
+        "review_label": review_label,
+        "llm_notes": result.get("notes", "Topic-first class refresh from dashboard."),
+    }
+    logger.info("Классы обновлены через LLM/topic-first flow: {}", proposed_classes)
 
 
 def style_source_table(df: pd.DataFrame) -> Any:
@@ -556,13 +707,14 @@ def render_sidebar(llm_client: GeminiLLMClient) -> float:
 
     with col2:
         if st.button("↩️ Сбросить к дефолту", key="reset_sidebar_classes"):
-            default_classes = [
-                "navigation",
-                "safety",
-                "equipment",
-                "weather",
-                "licensing",
-            ]
+            default_classes = fallback_classes_for_topic(
+                st.session_state.get(
+                    "topic",
+                    cfg.get("domain", {}).get(
+                        "topic", "sailing and yacht navigation"
+                    ),
+                )
+            )
             persist_domain_settings(classes=default_classes)
             st.session_state["current_classes"] = default_classes
             st.session_state.pop("classes_text_synced_from_classes", None)
@@ -1129,170 +1281,82 @@ def normalize_source_suggestions(sources_data: list[Any]) -> pd.DataFrame:
     return pd.DataFrame(normalized)
 
 
-def build_sources_detail(sources_data: list[Any]) -> dict[str, Any]:
-    """Build detailed onboarding source groups with expanders and links."""
-    details: dict[str, Any] = {
-        "StackExchange / форумы": {
-            "description": "Q&A форумы по теме",
-            "license": "CC BY-SA 4.0",
-            "risk": "✅ Свободно",
-            "items": [
-                {
-                    "name": "sailing.stackexchange.com",
-                    "url": "https://sailing.stackexchange.com",
-                    "rows": 98,
-                    "enabled": True,
-                },
-                {
-                    "name": "outdoors.stackexchange.com",
-                    "url": "https://outdoors.stackexchange.com",
-                    "rows": 50,
-                    "enabled": False,
-                },
-            ],
-        },
-        "HuggingFace datasets": {
-            "description": "Открытые ML датасеты",
-            "license": "зависит от датасета",
-            "risk": "✅ Свободно",
-            "items": [
-                {
-                    "name": "dair-ai/emotion",
-                    "url": "https://huggingface.co/datasets/dair-ai/emotion",
-                    "rows": 300,
-                    "enabled": True,
-                },
-                {
-                    "name": "mteb/tweet_sentiment_extraction",
-                    "url": "https://huggingface.co/datasets/mteb/tweet_sentiment_extraction",
-                    "rows": 300,
-                    "enabled": True,
-                },
-            ],
-        },
-        "Kaggle datasets": {
-            "description": "Тематические ML датасеты",
+def build_sources_detail(sources_data: list[Any], topic: str) -> dict[str, Any]:
+    """Build onboarding source groups from the current topic suggestions."""
+    effective_sources = sources_data or heuristic_source_suggestions(topic).get("sources", [])
+    details: dict[str, Any] = {}
+
+    for source in effective_sources:
+        payload = source if isinstance(source, dict) else {}
+        item_name = (
+            payload.get("name")
+            or payload.get("source")
+            or payload.get("title")
+            or str(source)
+        )
+        item_type = str(payload.get("type") or payload.get("source_type") or "other").lower()
+        item_url = str(payload.get("url", "")).strip()
+        item_rows = payload.get("estimated_rows") or payload.get("rows") or 100
+        item_license = str(payload.get("license") or payload.get("license_type") or "mixed")
+        item_risk = PERMISSION_LABELS.get(
+            payload.get("risk_level") or payload.get("risk") or "medium",
+            "⚠️ С оговорками",
+        )
+
+        if "dataset" in item_type:
+            group_name = "Datasets / corpora"
+            description = f"Датасеты и корпуса для темы: {topic}"
+        elif any(tag in item_type for tag in ["forum", "community", "q&a", "api"]):
+            group_name = "Communities / forums"
+            description = f"Форумы, Q&A и комьюнити по теме: {topic}"
+        elif any(tag in item_type for tag in ["rss", "media", "news", "blog", "docs"]):
+            group_name = "Media / docs"
+            description = f"Медиа, блоги и документация по теме: {topic}"
+        else:
+            group_name = "Additional sources"
+            description = f"Дополнительные источники по теме: {topic}"
+
+        group = details.setdefault(
+            group_name,
+            {
+                "description": description,
+                "license": item_license,
+                "risk": item_risk,
+                "items": [],
+            },
+        )
+        if group["license"] != item_license:
+            group["license"] = "mixed"
+        if group["risk"] == "✅ Свободно" and item_risk != "✅ Свободно":
+            group["risk"] = item_risk
+        elif group["risk"] == "⚠️ С оговорками" and item_risk == "🚫 Ограничено":
+            group["risk"] = item_risk
+
+        group["items"].append(
+            {
+                "name": str(item_name),
+                "url": item_url,
+                "rows": item_rows,
+                "enabled": item_risk != "🚫 Ограничено",
+                "disabled": bool(payload.get("disabled", False)),
+            }
+        )
+
+    if "Kaggle datasets" not in details:
+        details["Kaggle datasets"] = {
+            "description": "Поиск дополнительных текстовых датасетов на Kaggle",
             "license": "varies (CC / public domain)",
             "risk": "✅ Свободно",
             "items": [
                 {
-                    "name": "sailing-boats database",
-                    "url": "https://www.kaggle.com/datasets/opendatasource/sailing-boats",
+                    "name": f"Kaggle search: {topic}",
+                    "url": f"https://www.kaggle.com/search?q={quote_plus(topic or 'text classification')}",
                     "rows": 200,
                     "enabled": False,
                     "disabled": True,
-                },
-                {
-                    "name": "ocean ship logbooks 1750-1850",
-                    "url": "https://www.kaggle.com/datasets/cwiloc/climate-data-from-ocean-ships",
-                    "rows": 200,
-                    "enabled": False,
-                    "disabled": True,
-                },
-            ],
-        },
-        "Kaggle datasets": {
-            "description": "Тематические ML датасеты",
-            "license": "varies (CC / public domain)",
-            "risk": "✅ Свободно",
-            "items": [
-                {
-                    "name": "sailing-boats database",
-                    "url": "https://www.kaggle.com/datasets/opendatasource/sailing-boats",
-                    "rows": 200,
-                    "enabled": True,
-                },
-                {
-                    "name": "ocean ship logbooks 1750-1850",
-                    "url": "https://www.kaggle.com/datasets/cwiloc/climate-data-from-ocean-ships",
-                    "rows": 200,
-                    "enabled": True,
-                },
-            ],
-        },
-        "Kaggle datasets": {
-            "description": "Тематические ML датасеты",
-            "license": "varies (CC / public domain)",
-            "risk": "✅ Свободно",
-            "items": [
-                {
-                    "name": "sailing-boats database",
-                    "url": "https://www.kaggle.com/datasets/opendatasource/sailing-boats",
-                    "rows": 200,
-                    "enabled": True,
-                },
-                {
-                    "name": "ocean ship logbooks 1750-1850",
-                    "url": "https://www.kaggle.com/datasets/cwiloc/climate-data-from-ocean-ships",
-                    "rows": 200,
-                    "enabled": True,
-                },
-            ],
-        },
-        "Kaggle datasets": {
-            "description": "Тематические ML датасеты",
-            "license": "varies (CC / public domain)",
-            "risk": "✅ Свободно",
-            "items": [
-                {
-                    "name": "sailing-boats database",
-                    "url": "https://www.kaggle.com/datasets/opendatasource/sailing-boats",
-                    "rows": 200,
-                    "enabled": True,
-                },
-                {
-                    "name": "ocean ship logbooks 1750-1850",
-                    "url": "https://www.kaggle.com/datasets/cwiloc/climate-data-from-ocean-ships",
-                    "rows": 200,
-                    "enabled": True,
-                },
-            ],
-        },
-        "RSS отраслевых медиа": {
-            "description": "Новости яхтинга и парусного спорта",
-            "license": "editorial use",
-            "risk": "⚠️ С оговорками",
-            "items": [
-                {
-                    "name": "Yachting World",
-                    "url": "https://www.yachtingworld.com/feed",
-                    "rows": 30,
-                    "enabled": True,
-                },
-                {
-                    "name": "Cruising World",
-                    "url": "https://www.cruisingworld.com/feed/",
-                    "rows": 10,
-                    "enabled": True,
-                },
-                {
-                    "name": "Sail Magazine",
-                    "url": "https://www.sailmagazine.com/feed",
-                    "rows": 10,
-                    "enabled": True,
-                },
-                {
-                    "name": "48° North",
-                    "url": "https://www.48north.com/feed/",
-                    "rows": 10,
-                    "enabled": True,
-                },
-            ],
-        },
-        "Форумы": {
-            "description": "Тематические форумы яхтсменов",
-            "license": "robots.txt checked",
-            "risk": "⚠️ С оговорками",
-            "items": [
-                {
-                    "name": "Sailing Forums",
-                    "url": "https://www.sailingforums.com",
-                    "rows": 20,
-                    "enabled": True,
                 }
             ],
-        },
-    }
+        }
 
     return details
 
@@ -1333,23 +1397,22 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
             suggestion_payload = find_sources_with_llm(current_topic, llm_client)
         st.session_state["source_suggestions"] = suggestion_payload.get("sources", [])
         if suggestion_payload.get("suggested_classes"):
-            st.session_state["current_classes"] = [
+            refreshed_classes = [
                 str(item).strip()
                 for item in suggestion_payload.get("suggested_classes", [])
                 if str(item).strip()
             ]
+            if refreshed_classes:
+                st.session_state["current_classes"] = refreshed_classes
+                st.session_state.pop("classes_text_synced_from_classes", None)
+                persist_domain_settings(classes=refreshed_classes)
 
     suggestions = st.session_state.get("source_suggestions", [])
-    if suggestions:
-        df_sources = normalize_source_suggestions(suggestions)
-        st.dataframe(df_sources, use_container_width=True, hide_index=True)
-        st.caption(
-            "✅ Свободно — официальный API или открытая лицензия  |  "
-            "⚠️ С оговорками — robots.txt разрешает, лицензия неявная  |  "
-            "🚫 Ограничено — запрещено ToS или robots.txt"
-        )
+    effective_suggestions = suggestions or heuristic_source_suggestions(current_topic).get(
+        "sources", []
+    )
 
-    sources_detail = build_sources_detail(suggestions)
+    sources_detail = build_sources_detail(effective_suggestions, current_topic)
     if len(sources_detail) > 5:
         # TODO: пагинация при большом количестве дополнительных источников
         pass
@@ -1596,115 +1659,12 @@ def build_sources_detail(sources_data: list[Any]) -> dict[str, Any]:
     return details
 
 
-def build_sources_detail(sources_data: list[Any]) -> dict[str, Any]:
-    """Build onboarding source groups and merge LLM suggestions into sections."""
-    details: dict[str, Any] = {
-        "StackExchange / форумы": {
-            "description": "Q&A форумы по теме",
-            "license": "CC BY-SA 4.0",
-            "risk": "✅ Свободно",
-            "items": [
-                {
-                    "name": "sailing.stackexchange.com",
-                    "url": "https://sailing.stackexchange.com",
-                    "rows": 98,
-                    "enabled": True,
-                },
-                {
-                    "name": "outdoors.stackexchange.com",
-                    "url": "https://outdoors.stackexchange.com",
-                    "rows": 50,
-                    "enabled": False,
-                },
-            ],
-        },
-        "HuggingFace datasets": {
-            "description": "Открытые ML датасеты",
-            "license": "зависит от датасета",
-            "risk": "✅ Свободно",
-            "items": [
-                {
-                    "name": "dair-ai/emotion",
-                    "url": "https://huggingface.co/datasets/dair-ai/emotion",
-                    "rows": 300,
-                    "enabled": True,
-                },
-                {
-                    "name": "mteb/tweet_sentiment_extraction",
-                    "url": "https://huggingface.co/datasets/mteb/tweet_sentiment_extraction",
-                    "rows": 300,
-                    "enabled": True,
-                },
-            ],
-        },
-        "Kaggle datasets": {
-            "description": "Тематические ML датасеты",
-            "license": "varies (CC / public domain)",
-            "risk": "✅ Свободно",
-            "items": [
-                {
-                    "name": "sailing-boats database",
-                    "url": "https://www.kaggle.com/datasets/opendatasource/sailing-boats",
-                    "rows": 200,
-                    "enabled": False,
-                    "disabled": True,
-                },
-                {
-                    "name": "ocean ship logbooks 1750-1850",
-                    "url": "https://www.kaggle.com/datasets/cwiloc/climate-data-from-ocean-ships",
-                    "rows": 200,
-                    "enabled": False,
-                    "disabled": True,
-                },
-            ],
-        },
-        "RSS отраслевых медиа": {
-            "description": "Новости яхтинга и парусного спорта",
-            "license": "editorial use",
-            "risk": "⚠️ С оговорками",
-            "items": [
-                {
-                    "name": "Yachting World",
-                    "url": "https://www.yachtingworld.com/feed",
-                    "rows": 30,
-                    "enabled": True,
-                },
-                {
-                    "name": "Cruising World",
-                    "url": "https://www.cruisingworld.com/feed/",
-                    "rows": 10,
-                    "enabled": True,
-                },
-                {
-                    "name": "Sail Magazine",
-                    "url": "https://www.sailmagazine.com/feed",
-                    "rows": 10,
-                    "enabled": True,
-                },
-                {
-                    "name": "48° North",
-                    "url": "https://www.48north.com/feed/",
-                    "rows": 10,
-                    "enabled": True,
-                },
-            ],
-        },
-        "Форумы": {
-            "description": "Тематические форумы яхтсменов",
-            "license": "robots.txt checked",
-            "risk": "⚠️ С оговорками",
-            "items": [
-                {
-                    "name": "Sailing Forums",
-                    "url": "https://www.sailingforums.com",
-                    "rows": 20,
-                    "enabled": True,
-                }
-            ],
-        },
-    }
+def build_sources_detail(sources_data: list[Any], topic: str = "") -> dict[str, Any]:
+    """Build onboarding source groups from current topic suggestions."""
+    effective_sources = sources_data or heuristic_source_suggestions(topic).get("sources", [])
+    details: dict[str, Any] = {}
 
-    for source in sources_data:
+    for source in effective_sources:
         payload = source if isinstance(source, dict) else {}
         item_name = (
             payload.get("name")
@@ -1715,42 +1675,66 @@ def build_sources_detail(sources_data: list[Any]) -> dict[str, Any]:
         item_type = str(payload.get("type") or payload.get("source_type") or "other").lower()
         item_url = str(payload.get("url", "")).strip()
         item_rows = payload.get("estimated_rows") or payload.get("rows") or 100
-        permission = PERMISSION_LABELS.get(
+        item_license = str(payload.get("license") or payload.get("license_type") or "mixed")
+        item_risk = PERMISSION_LABELS.get(
             payload.get("risk_level") or payload.get("risk") or "medium",
             "⚠️ С оговорками",
         )
-        license_name = payload.get("license") or payload.get("license_type") or "—"
 
         if "dataset" in item_type:
-            group_name = "LLM-рекомендации: datasets"
-            description = "Датасеты, предложенные Gemini для новой темы"
-        elif any(tag in item_type for tag in ["rss", "feed", "news", "media"]):
-            group_name = "LLM-рекомендации: RSS / медиа"
-            description = "Медиа-источники, предложенные Gemini для новой темы"
-        elif any(tag in item_type for tag in ["api", "forum", "q&a", "qa", "stack"]):
-            group_name = "LLM-рекомендации: API / форумы"
-            description = "API и форумы, предложенные Gemini для новой темы"
+            group_name = "Datasets / corpora"
+            description = f"Датасеты и корпуса для темы: {topic}"
+        elif any(tag in item_type for tag in ["forum", "community", "q&a", "api"]):
+            group_name = "Communities / forums"
+            description = f"Форумы, Q&A и комьюнити по теме: {topic}"
+        elif any(tag in item_type for tag in ["rss", "media", "news", "blog", "docs"]):
+            group_name = "Media / docs"
+            description = f"Медиа, блоги и документация по теме: {topic}"
         else:
-            group_name = "LLM-рекомендации: дополнительные источники"
-            description = "Дополнительные источники, предложенные Gemini"
+            group_name = "Additional sources"
+            description = f"Дополнительные источники по теме: {topic}"
 
         group = details.setdefault(
             group_name,
             {
                 "description": description,
-                "license": license_name,
-                "risk": permission,
+                "license": item_license,
+                "risk": item_risk,
                 "items": [],
             },
         )
+        if group["license"] != item_license:
+            group["license"] = "mixed"
+        if group["risk"] == "✅ Свободно" and item_risk != "✅ Свободно":
+            group["risk"] = item_risk
+        elif group["risk"] == "⚠️ С оговорками" and item_risk == "🚫 Ограничено":
+            group["risk"] = item_risk
+
         group["items"].append(
             {
                 "name": str(item_name),
                 "url": item_url,
                 "rows": item_rows,
-                "enabled": permission != "🚫 Ограничено",
+                "enabled": item_risk != "🚫 Ограничено",
+                "disabled": bool(payload.get("disabled", False)),
             }
         )
+
+    if "Kaggle datasets" not in details:
+        details["Kaggle datasets"] = {
+            "description": "Поиск дополнительных текстовых датасетов на Kaggle",
+            "license": "varies (CC / public domain)",
+            "risk": "✅ Свободно",
+            "items": [
+                {
+                    "name": f"Kaggle search: {topic or 'text classification'}",
+                    "url": f"https://www.kaggle.com/search?q={quote_plus(topic or 'text classification')}",
+                    "rows": 200,
+                    "enabled": False,
+                    "disabled": True,
+                }
+            ],
+        }
 
     return details
 
