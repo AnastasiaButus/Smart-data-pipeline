@@ -441,6 +441,59 @@ def test_generate_eda_hypotheses_fallback(
     assert len(hypotheses) == 5
 
 
+def test_generate_eda_hypotheses_fallback_is_topic_aware(
+    temp_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fallback hypotheses should reflect the current topic instead of hardcoded sailing text."""
+    config_path = temp_project / "config.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["domain"]["topic"] = "cars"
+    config["domain"]["classes"] = [
+        "cars_basics",
+        "cars_tools",
+        "cars_workflows",
+        "cars_issues",
+        "cars_advanced",
+    ]
+    config_path.write_text(
+        yaml.safe_dump(config, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    df = pd.DataFrame(
+        {
+            "id": ["1", "2", "3"],
+            "text": [
+                "Cars engine tuning and brake setup for track days.",
+                "Garage diagnostics workflow for fuel systems and transmission issues.",
+                "General emotion post unrelated to cars.",
+            ],
+            "label": ["unlabeled", "unlabeled", "unlabeled"],
+            "source": [
+                "topic_bootstrap_guides",
+                "topic_bootstrap_forum",
+                "huggingface_example",
+            ],
+            "collected_at": [
+                "2026-03-30T10:00:00+00:00",
+                "2026-03-30T10:01:00+00:00",
+                "2026-03-30T10:02:00+00:00",
+            ],
+        }
+    )
+
+    client = GeminiLLMClient(config_path=str(config_path))
+    summary = client.build_dataset_summary(df)
+    monkeypatch.setattr(client, "is_available", lambda: False)
+
+    hypotheses = client.generate_eda_hypotheses(summary)
+
+    combined = " ".join(hypotheses).lower()
+    assert "cars" in combined
+    assert "яхт" not in combined
+    assert "navigation" not in combined
+
+
 def test_generate_stopwords_returns_set(
     temp_project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

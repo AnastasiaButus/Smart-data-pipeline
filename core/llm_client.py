@@ -978,32 +978,65 @@ class GeminiLLMClient:
 
     def _heuristic_eda_hypotheses(self, dataset_summary: dict[str, Any]) -> list[str]:
         """Build deterministic EDA hypotheses from dataset statistics."""
+        topic = str(dataset_summary.get("current_topic", "текущая тема")).strip() or "текущая тема"
+        total_rows = max(int(dataset_summary.get("total_rows", 0) or 0), 1)
+        source_distribution = {
+            str(name): int(count)
+            for name, count in (dataset_summary.get("source_distribution", {}) or {}).items()
+        }
+        current_classes = [
+            str(item).strip()
+            for item in dataset_summary.get("current_classes", [])
+            if str(item).strip()
+        ]
+        short_pct = float(dataset_summary.get("pct_short_texts", 0.0) or 0.0)
+        long_pct = float(dataset_summary.get("pct_long_texts", 0.0) or 0.0)
+        html_count = int(dataset_summary.get("html_entity_count", 0) or 0)
+        top_keywords = [
+            str(item).strip()
+            for item in dataset_summary.get("top_keywords_global", [])
+            if str(item).strip()
+        ][:5]
+
+        dominant_source = "unknown"
+        dominant_count = 0
+        if source_distribution:
+            dominant_source, dominant_count = max(
+                source_distribution.items(),
+                key=lambda item: item[1],
+            )
+        dominant_pct = round((dominant_count / total_rows) * 100, 1) if total_rows else 0.0
+        hf_count = sum(
+            count
+            for source_name, count in source_distribution.items()
+            if source_name.startswith("huggingface_")
+        )
+        hf_pct = round((hf_count / total_rows) * 100, 1) if total_rows else 0.0
+        classes_text = ", ".join(current_classes[:5]) or "доменные классы"
+        keywords_text = ", ".join(top_keywords[:4]) or "частотные термины датасета"
+        source_count = len(source_distribution)
+
         return [
             (
-                "HuggingFace источники составляют 76.6% данных — "
-                "первый шаг классификации должен отделить "
-                "тематические тексты о яхтинге от нетематических."
+                f"Крупнейший источник `{dominant_source}` даёт {dominant_pct:.1f}% данных "
+                f"по теме `{topic}` — стоит проверить, не смещает ли он итоговую выборку."
             ),
             (
-                "Тематические источники (StackExchange, форумы, RSS) "
-                "составляют 23.4% — их достаточно для поддержки "
-                "классов: навигация, безопасность, оборудование, "
-                "погода, лицензирование."
+                f"Текущие классы (`{classes_text}`) лучше проверять в два шага: сначала отделять "
+                "доменные тексты от шума, затем различать подклассы внутри релевантных источников."
             ),
             (
-                "19.8% текстов короче 50 символов — краткие заголовки "
-                "потребуют консервативной стратегии аннотации "
+                f"{short_pct:.1f}% текстов короче 50 символов, а {long_pct:.1f}% длиннее 500 — "
+                "крайне короткие и крайне длинные тексты потребуют консервативной стратегии аннотации "
                 "через review_label=other_or_offtopic."
             ),
             (
-                "HTML-артефакты обнаружены в 100% RSS-текстов — "
-                "очистка разметки критична перед авторазметкой "
-                "и улучшит качество keyword-классификации."
+                f"В датасете обнаружено {html_count} HTML-артефактов; если шум идёт из RSS/скрапинга, "
+                "очистка разметки перед авторазметкой заметно улучшит качество классификации."
             ),
             (
-                "Дисбаланс источников указывает на риск смещения "
-                "модели в сторону нетематического контента — "
-                "необходима взвешенная выборка при обучении."
+                f"HuggingFace-подобные источники занимают {hf_pct:.1f}% объёма, а всего источников {source_count}; "
+                f"частотные слова `{keywords_text}` полезно использовать как sanity-check, что датасет остаётся в теме `{topic}`."
             ),
         ]
 

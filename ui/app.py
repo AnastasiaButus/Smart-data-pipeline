@@ -43,14 +43,7 @@ CLEAN_DATASET_PATH = ROOT / "data" / "raw" / "dataset_clean.parquet"
 ANNOTATED_DATASET_PATH = ROOT / "data" / "labeled" / "annotated.parquet"
 REVIEW_QUEUE_PATH = ROOT / "data" / "review_queue.csv"
 EDA_REPORT_PATH = ROOT / "reports" / "eda_report.html"
-
-LICENSE_ROWS = [
-    {"Источник": "HuggingFace emotion", "Строк": 298, "Тип лицензии": "Apache 2.0", "Статус скрапинга": "✅"},
-    {"Источник": "HuggingFace tweets", "Строк": 285, "Тип лицензии": "MIT", "Статус скрапинга": "✅"},
-    {"Источник": "StackExchange", "Строк": 98, "Тип лицензии": "CC BY-SA 4.0", "Статус скрапинга": "✅"},
-    {"Источник": "Yachting World RSS", "Строк": 30, "Тип лицензии": "editorial use", "Статус скрапинга": "⚠️"},
-    {"Источник": "Sailing Forums", "Строк": 20, "Тип лицензии": "robots.txt checked", "Статус скрапинга": "⚠️"},
-]
+EDA_METADATA_PATH = ROOT / "reports" / "eda_metadata.json"
 
 SAILING_TOPIC = "sailing and yacht navigation"
 SAILING_DEFAULT_CLASSES = [
@@ -118,6 +111,23 @@ def clear_topic_source_state() -> None:
     st.session_state.pop("confirmed_sources", None)
 
 
+def run_eda_export_for_current_topic() -> tuple[bool, str]:
+    """Rebuild the interactive EDA report for the current artifacts."""
+    command = [sys.executable, str(ROOT / "notebooks" / "export_eda.py")]
+    completed = subprocess.run(
+        command,
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    combined_output = "\n".join(
+        part.strip() for part in [completed.stdout, completed.stderr] if str(part).strip()
+    )
+    return completed.returncode == 0, combined_output
+
+
 def run_pipeline_for_current_topic() -> None:
     """Run the full pipeline for the currently selected topic and persist a user-facing status."""
     topic = str(st.session_state.get("topic", SAILING_TOPIC)).strip() or SAILING_TOPIC
@@ -139,13 +149,18 @@ def run_pipeline_for_current_topic() -> None:
     st.session_state["last_pipeline_run_code"] = int(completed.returncode)
 
     if completed.returncode == 0:
+        eda_ok, eda_output = run_eda_export_for_current_topic()
+        detail_parts = [part for part in [combined_output] if part]
+        if eda_output:
+            detail_parts.append("=== EDA export ===\n" + eda_output)
+        combined_details = "\n\n".join(detail_parts)
         notice = {
             "kind": "success",
             "message": (
                 f"Pipeline для темы **{topic}** завершён. "
                 "Данные, HITL и аналитика обновлены."
             ),
-            "details": combined_output,
+            "details": combined_details,
         }
         if "RESOURCE_EXHAUSTED" in combined_output:
             notice = {
@@ -154,7 +169,7 @@ def run_pipeline_for_current_topic() -> None:
                     f"Pipeline для темы **{topic}** завершён, но Gemini quota была исчерпана "
                     "и часть LLM-шагов отработала через fallback."
                 ),
-                "details": combined_output,
+                "details": combined_details,
             }
         if "Training skipped:" in combined_output or "training was skipped" in combined_output:
             notice = {
@@ -163,7 +178,16 @@ def run_pipeline_for_current_topic() -> None:
                     f"Данные для темы **{topic}** обновлены, но финальное обучение пока пропущено. "
                     "Сначала проверьте примеры во вкладке HITL, затем запустите переобучение."
                 ),
-                "details": combined_output,
+                "details": combined_details,
+            }
+        if not eda_ok:
+            notice = {
+                "kind": "warning",
+                "message": (
+                    f"Данные для темы **{topic}** обновлены, но EDA-отчёт не удалось пересобрать автоматически. "
+                    "Во вкладке Аналитика можно повторить пересборку вручную."
+                ),
+                "details": combined_details,
             }
         st.session_state["pipeline_refresh_notice"] = notice
         ensure_review_state(force_reload=True)
@@ -330,6 +354,137 @@ def read_csv_safe(path: Path) -> pd.DataFrame:
     except Exception as exc:
         logger.error("Не удалось прочитать CSV {}: {}", path, exc)
         return pd.DataFrame()
+
+
+def read_json_safe(path: Path) -> dict[str, Any] | list[Any]:
+    """Read JSON safely and return an empty payload on failure."""
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.error("Не удалось прочитать JSON {}: {}", path, exc)
+        return {}
+
+
+def get_latest_artifact_mtime(paths: list[Path]) -> float:
+    """Return the latest modification time among existing files."""
+    mtimes = [path.stat().st_mtime for path in paths if path.exists()]
+    return max(mtimes) if mtimes else 0.0
+
+
+def get_eda_report_status(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Describe whether the saved EDA HTML report matches the current topic and data."""
+    topic_status = get_topic_data_status(config)
+    if not topic_status["is_fresh"]:
+        return {
+            "exists": EDA_REPORT_PATH.exists(),
+            "is_fresh": False,
+            "reason": "data_stale",
+            "report_topic": "",
+            "current_topic": topic_status["current_topic"],
+        }
+
+    metadata = read_json_safe(EDA_METADATA_PATH)
+    if not EDA_REPORT_PATH.exists() or not isinstance(metadata, dict):
+        return {
+            "exists": EDA_REPORT_PATH.exists(),
+            "is_fresh": False,
+            "reason": "missing",
+            "report_topic": "",
+            "current_topic": topic_status["current_topic"],
+        }
+
+    current_topic = normalize_topic_name(topic_status["current_topic"])
+    report_topic = normalize_topic_name(
+        str(metadata.get("normalized_topic") or metadata.get("topic") or "")
+    )
+    latest_dataset_mtime = get_latest_artifact_mtime(
+        [RAW_DATASET_PATH, CLEAN_DATASET_PATH, ANNOTATED_DATASET_PATH]
+    )
+    metadata_dataset_mtime = max(
+        float(metadata.get("raw_dataset_mtime", 0.0) or 0.0),
+        float(metadata.get("clean_dataset_mtime", 0.0) or 0.0),
+        float(metadata.get("annotated_dataset_mtime", 0.0) or 0.0),
+    )
+    if not report_topic or current_topic != report_topic:
+        reason = "topic_mismatch"
+    elif metadata_dataset_mtime < latest_dataset_mtime:
+        reason = "outdated"
+    else:
+        reason = "fresh"
+
+    return {
+        "exists": EDA_REPORT_PATH.exists(),
+        "is_fresh": reason == "fresh",
+        "reason": reason,
+        "report_topic": str(metadata.get("topic") or ""),
+        "current_topic": topic_status["current_topic"],
+    }
+
+
+def humanize_source_name(source_name: str) -> str:
+    """Map internal source ids to readable names for analytics."""
+    source = str(source_name or "")
+    if source.startswith("huggingface_"):
+        return f"HuggingFace / {source.removeprefix('huggingface_').replace('_', ' ')}"
+    if source.startswith("stackexchange_"):
+        return f"StackExchange / {source.removeprefix('stackexchange_').replace('_', ' ')}"
+    if source.startswith("rss_"):
+        return f"RSS / {source.removeprefix('rss_')}"
+    if source.startswith("topic_bootstrap_"):
+        return f"Topic bootstrap / {source.removeprefix('topic_bootstrap_').replace('_', ' ')}"
+    if source.startswith("kaggle_"):
+        return f"Kaggle / {source.removeprefix('kaggle_').replace('_', ' ')}"
+    if "forum" in source.lower():
+        return f"Forum / {source}"
+    return source.replace("_", " ")
+
+
+def source_license_and_status(source_name: str) -> tuple[str, str]:
+    """Infer a compact license/status description from the source id."""
+    source = str(source_name or "").lower()
+    if source.startswith("huggingface_"):
+        return ("dataset license", "✅")
+    if source.startswith("stackexchange_"):
+        return ("CC BY-SA 4.0", "✅")
+    if source.startswith("rss_"):
+        return ("editorial use", "⚠️")
+    if source.startswith("topic_bootstrap_"):
+        return ("generated bootstrap", "✅")
+    if source.startswith("kaggle_"):
+        return ("varies", "✅")
+    if "forum" in source:
+        return ("robots.txt checked", "⚠️")
+    return ("unknown", "—")
+
+
+def build_source_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Build a source summary table from the current dataset instead of static rows."""
+    if df.empty or "source" not in df.columns:
+        return pd.DataFrame()
+
+    source_counts = (
+        df["source"]
+        .fillna("unknown")
+        .astype(str)
+        .value_counts()
+        .rename_axis("source")
+        .reset_index(name="Строк")
+    )
+    records: list[dict[str, Any]] = []
+    for _, row in source_counts.iterrows():
+        source_name = str(row["source"])
+        license_type, scraping_status = source_license_and_status(source_name)
+        records.append(
+            {
+                "Источник": humanize_source_name(source_name),
+                "Строк": int(row["Строк"]),
+                "Тип лицензии": license_type,
+                "Статус источника": scraping_status,
+            }
+        )
+    return pd.DataFrame(records)
 
 
 def init_state() -> None:
@@ -1161,7 +1316,10 @@ def render_analytics_tab(threshold: float) -> None:
         )
         st.plotly_chart(fig_conf, use_container_width=True)
 
-    st.dataframe(pd.DataFrame(LICENSE_ROWS), use_container_width=True, hide_index=True)
+    source_table_df = build_source_table(get_best_dataset())
+    if not source_table_df.empty:
+        st.markdown("**Источники в текущем датасете**")
+        st.dataframe(source_table_df, use_container_width=True, hide_index=True)
 
     st.markdown("---")
     st.markdown("**📊 Расширенный интерактивный EDA отчёт**")
@@ -1172,8 +1330,42 @@ def render_analytics_tab(threshold: float) -> None:
         "работает без интернета."
     )
 
+    eda_status = get_eda_report_status()
+    if not eda_status["is_fresh"]:
+        if eda_status["reason"] == "topic_mismatch":
+            st.warning(
+                "Сохранённый EDA-отчёт относится к теме "
+                f"**{eda_status['report_topic'] or 'неизвестно'}**, а сейчас выбрана "
+                f"**{eda_status['current_topic']}**. Пересоберите отчёт ниже."
+            )
+        elif eda_status["reason"] == "outdated":
+            st.warning(
+                "EDA-отчёт устарел: данные уже обновились, а HTML ещё нет. "
+                "Нажмите кнопку ниже, чтобы пересобрать отчёт на текущих артефактах."
+            )
+        else:
+            st.info(
+                "EDA-отчёт ещё не создан для текущей темы. "
+                "Его можно собрать прямо из этой вкладки."
+            )
+
+        if st.button("♻️ Пересобрать EDA отчёт", key="rebuild_eda_report"):
+            with st.spinner("Пересобираю интерактивный EDA-отчёт..."):
+                ok, output = run_eda_export_for_current_topic()
+            if ok:
+                st.success("EDA-отчёт пересобран для текущей темы.")
+                st.session_state["pipeline_refresh_notice"] = {
+                    "kind": "success",
+                    "message": "EDA-отчёт обновлён на свежих данных.",
+                    "details": output,
+                }
+                st.rerun()
+            st.error("Не удалось пересобрать EDA-отчёт. Лог ниже.")
+            with st.expander("Показать лог пересборки EDA"):
+                st.code(output or "Лог пуст")
+
     eda_path = pathlib.Path("reports/eda_report.html")
-    if eda_path.exists():
+    if eda_path.exists() and get_eda_report_status()["is_fresh"]:
         with open(eda_path, "rb") as report_file:
             st.download_button(
                 label="⬇️ Скачать EDA отчёт (HTML, интерактивный)",
@@ -1184,8 +1376,8 @@ def render_analytics_tab(threshold: float) -> None:
             )
     else:
         st.warning(
-            "EDA отчёт не найден. "
-            "Запустите: python notebooks/export_eda.py"
+            "Свежий EDA-отчёт пока недоступен. "
+            "Сначала пересоберите его кнопкой выше."
         )
 
     st.divider()
@@ -1197,27 +1389,32 @@ def render_analytics_tab(threshold: float) -> None:
         st.markdown("**EDA ноутбук**")
         st.caption("Исходный анализ данных с графиками")
         st.code(
-            ".venv\\Scripts\\activate\n"
-            "jupyter notebook notebooks/eda.ipynb",
-            language="bash",
+            "$env:JUPYTER_CONFIG_DIR = \"$PWD\\.jupyter_runtime\"\n"
+            ".venv\\Scripts\\python.exe -m jupyter notebook notebooks/eda.ipynb",
+            language="powershell",
+        )
+        st.caption(
+            "💡 Эта команда использует Python из проекта и обходит сломанный "
+            "глобальный Jupyter config из Anaconda."
         )
 
     with notebook_col2:
         st.markdown("**AL эксперимент**")
         st.caption("Сравнение стратегий Active Learning")
         st.code(
-            "jupyter notebook notebooks/al_experiment.ipynb",
-            language="bash",
+            "$env:JUPYTER_CONFIG_DIR = \"$PWD\\.jupyter_runtime\"\n"
+            ".venv\\Scripts\\python.exe -m jupyter notebook notebooks/al_experiment.ipynb",
+            language="powershell",
         )
         st.caption(
-            "💡 Запускать БЕЗ активации .venv — "
-            "использовать Anaconda окружение напрямую"
+            "💡 Для второго ноутбука используйте ту же схему: локальный config + "
+            "Jupyter из `.venv`, а не системный `jupyter.exe`."
         )
 
     st.info(
-        "💡 Запустите команды по очереди в терминале "
-        "из папки проекта. Сначала активируйте окружение, "
-        "затем запустите ноутбук."
+        "💡 Запускайте команды из папки проекта. "
+        "Они изолируют Jupyter от глобального пользовательского конфига и открывают ноутбук "
+        "в корректном окружении проекта."
     )
 
     st.subheader("📋 Сформировать отчёт")

@@ -37,6 +37,7 @@ WORDCLOUD_ALL_PATH = REPORTS_DIR / "wordcloud_all.png"
 WORDCLOUD_DOMAIN_PATH = REPORTS_DIR / "wordcloud_domain.png"
 HYPOTHESES_PATH = REPORTS_DIR / "eda_hypotheses.json"
 EDA_REPORT_PATH = REPORTS_DIR / "eda_report.html"
+EDA_METADATA_PATH = REPORTS_DIR / "eda_metadata.json"
 
 THEMATIC_SOURCE_NAMES = {"stackexchange_sailing", "sailingforums"}
 BASE_STOPWORDS = {
@@ -432,6 +433,11 @@ def load_topic(project_root: Path | None = None) -> str:
     return str(config.get("domain", {}).get("topic", "sailing and yacht navigation"))
 
 
+def normalize_topic_name(topic: str) -> str:
+    """Normalize topic text for comparisons and metadata."""
+    return " ".join(str(topic).strip().lower().split())
+
+
 def build_stopwords(
     domain_spec: dict[str, Any],
     topic: str | None = None,
@@ -458,7 +464,16 @@ def build_stopwords(
 
 def is_thematic_source(source_name: str) -> bool:
     """Return ``True`` for domain-oriented sources."""
-    return source_name.startswith("rss_") or source_name in THEMATIC_SOURCE_NAMES
+    source = str(source_name or "").strip().lower()
+    if not source or source == "unknown":
+        return False
+    if source.startswith("huggingface_"):
+        return False
+    if source.startswith(("rss_", "stackexchange_", "topic_bootstrap_", "kaggle_")):
+        return True
+    if "forum" in source:
+        return True
+    return source in THEMATIC_SOURCE_NAMES
 
 
 def tokenize_text(text: str, stopwords: set[str]) -> list[str]:
@@ -601,7 +616,7 @@ def save_wordcloud_image(
 ) -> str:
     """Create and save a WordCloud image, returning a base64 HTML payload."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    corpus = " ".join(texts).strip() or "sailing navigation safety weather equipment"
+    corpus = " ".join(texts).strip() or "dataset analysis topic classification quality review"
     cloud = WordCloud(
         width=800,
         height=400,
@@ -787,24 +802,93 @@ def save_hypotheses(
     return hypotheses
 
 
+def top_terms_from_texts(
+    texts: list[str],
+    stopwords: set[str],
+    limit: int = 5,
+) -> list[str]:
+    """Return the most frequent informative tokens from the provided texts."""
+    counter: Counter[str] = Counter()
+    for text in texts:
+        counter.update(tokenize_text(str(text), stopwords))
+    return [token for token, _ in counter.most_common(limit)]
+
+
+def summarize_quality_issues(quality_df: pd.DataFrame, limit: int = 3) -> list[str]:
+    """Summarize the most visible quality issues across sources."""
+    if quality_df.empty:
+        return []
+
+    issue_definitions = [
+        ("html_entities", "HTML-артефакты"),
+        ("short_texts(<50)", "короткие тексты"),
+        ("long_texts(>1000)", "слишком длинные тексты"),
+        ("duplicates_pct", "дубликаты"),
+    ]
+    issues: list[tuple[float, str]] = []
+    for _, row in quality_df.iterrows():
+        source_name = str(row.get("source", "unknown"))
+        for column_name, label in issue_definitions:
+            value = float(row.get(column_name, 0.0) or 0.0)
+            if value > 0:
+                issues.append((value, f"{label} в `{source_name}` ({value:.1f}%)"))
+    issues.sort(key=lambda item: item[0], reverse=True)
+    return [text for _, text in issues[:limit]]
+
+
+def save_eda_metadata(
+    topic: str,
+    project_root: Path | None = None,
+) -> dict[str, Any]:
+    """Persist lightweight metadata describing which topic/data the EDA report belongs to."""
+    root = project_root or ROOT
+    raw_path = root / "data" / "raw" / "dataset.parquet"
+    clean_path = root / "data" / "raw" / "dataset_clean.parquet"
+    annotated_path = root / "data" / "labeled" / "annotated.parquet"
+    metadata = {
+        "topic": topic,
+        "normalized_topic": normalize_topic_name(topic),
+        "generated_at": pd.Timestamp.utcnow().isoformat(),
+        "raw_dataset_mtime": raw_path.stat().st_mtime if raw_path.exists() else 0.0,
+        "clean_dataset_mtime": clean_path.stat().st_mtime if clean_path.exists() else 0.0,
+        "annotated_dataset_mtime": annotated_path.stat().st_mtime if annotated_path.exists() else 0.0,
+    }
+    EDA_METADATA_PATH.write_text(
+        json.dumps(metadata, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    logger.info("EDA metadata saved to {}", EDA_METADATA_PATH)
+    return metadata
+
+
 def build_conclusions_html(
+    topic: str,
     thematic_stats: dict[str, float],
     quality_df: pd.DataFrame,
+    source_df: pd.DataFrame,
 ) -> str:
     """Build the conclusions and recommendations section as styled HTML."""
+    dominant_sources = ", ".join(
+        source_df.sort_values("count", ascending=False)["source"].head(3).astype(str).tolist()
+    ) or "нет данных"
+    issues = summarize_quality_issues(quality_df)
+    issue_html = "".join(f"<li>{escape(item)}</li>" for item in issues) or (
+        "<li>Серьёзных проблем качества не обнаружено, но перед авторазметкой всё равно стоит "
+        "проверить короткие тексты и шумные источники.</li>"
+    )
     return f"""
 <div class="conclusions section-content">
   <h2>Выводы и рекомендации</h2>
   <ul>
+    <li>Текущая тема: <strong>{escape(topic)}</strong>.</li>
     <li>Тематических строк: <strong>{thematic_stats['thematic_rows']} ({thematic_stats['thematic_pct']:.1f}%)</strong>
         — нетематических: <strong>{thematic_stats['off_topic_rows']} ({thematic_stats['off_topic_pct']:.1f}%)</strong></li>
-    <li>Топ проблемы качества: html_entities (RSS),
-        short_texts (sailingforums), длинные тексты (yachtingworld)</li>
+    <li>Доминирующие источники: <strong>{escape(dominant_sources)}</strong>.</li>
+    {issue_html}
     <li><strong>DataQualityAgent</strong>: приоритет —
-        HTML cleanup, дубликаты, фильтрация коротких текстов</li>
-    <li><strong>AnnotationAgent</strong>: использовать
-        review_label=other_or_offtopic для HF-heavy строк,
-        начать с тематических источников</li>
+        очистка шумных источников, near-duplicate контроль и фильтрация слишком коротких текстов.</li>
+    <li><strong>AnnotationAgent</strong>: сначала отделить доменный контент от общего шума,
+        затем уточнять классы внутри тематических источников и отправлять спорные случаи в HITL.</li>
   </ul>
 </div>
 """.strip()
@@ -815,6 +899,8 @@ def build_insights(
     source_df: pd.DataFrame,
     thematic_stats: dict[str, float],
     quality_df: pd.DataFrame,
+    stopwords: set[str],
+    topic: str,
 ) -> dict[str, str]:
     """Build dynamic insights for each EDA block."""
     total = int(len(df))
@@ -825,12 +911,33 @@ def build_insights(
     hf_pct = round((hf_rows / total) * 100, 1) if total else 0.0
     theme_pct = float(thematic_stats["thematic_pct"])
     domain_pct = float(thematic_stats["thematic_pct"])
+    dominant_sources = source_df.sort_values("count", ascending=False).head(3)
+    dominant_source_names = ", ".join(dominant_sources["source"].astype(str).tolist()) or "нет данных"
+    top_source = str(dominant_sources.iloc[0]["source"]) if not dominant_sources.empty else "нет данных"
+    top_source_share = (
+        round(float(dominant_sources.iloc[0]["count"]) / total * 100, 1)
+        if total and not dominant_sources.empty
+        else 0.0
+    )
+    all_terms = ", ".join(top_terms_from_texts(df["text"].tolist(), stopwords, limit=5)) or "ключевые термины темы"
+    thematic_texts = df.loc[df["source"].apply(is_thematic_source), "text"].tolist()
+    domain_terms = ", ".join(top_terms_from_texts(thematic_texts, stopwords, limit=5)) or "доменные термины"
+    issues = summarize_quality_issues(quality_df, limit=2)
+    issues_text = "; ".join(issues) if issues else "критичных аномалий по качеству почти нет"
 
     median_len = float(df["text_len"].median()) if total else 0.0
     mean_len = float(df["text_len"].mean()) if total else 0.0
     p95 = float(df["text_len"].quantile(0.95)) if total else 0.0
-    rss_mask = df["source"].str.startswith("rss_")
-    max_rss = int(df.loc[rss_mask, "text_len"].max()) if rss_mask.any() else 0
+    longest_source = (
+        df.groupby("source")["text_len"].mean().sort_values(ascending=False).index[0]
+        if total
+        else "нет данных"
+    )
+    max_source_len = (
+        int(df.groupby("source")["text_len"].max().sort_values(ascending=False).iloc[0])
+        if total
+        else 0
+    )
 
     rss_html = float(
         quality_df.loc[
@@ -838,22 +945,17 @@ def build_insights(
             "html_entities",
         ].max()
     ) if quality_df["source"].str.startswith("rss_").any() else 0.0
-    sailingforums_short = float(
-        quality_df.loc[
-            quality_df["source"] == "sailingforums",
-            "short_texts(<50)",
-        ].max()
-    ) if (quality_df["source"] == "sailingforums").any() else 0.0
 
     return {
         "source_bar": (
             f"<strong>Наблюдение:</strong> Датасет содержит {total} строк из {n_sources} "
-            f"источников. Доминируют нетематические HuggingFace источники ({hf_pct:.1f}%). "
-            f"Тематических данных {theme_pct:.1f}% — это важно учесть при аннотации."
+            f"источников. Крупнейшие источники: {escape(dominant_source_names)}. "
+            f"Тематических данных {theme_pct:.1f}% — это важно учесть при аннотации по теме <strong>{escape(topic)}</strong>."
         ),
         "source_pie": (
-            f"<strong>Наблюдение:</strong> Два HuggingFace датасета занимают {hf_pct:.1f}% "
-            f"объёма. StackExchange и форумы дают {domain_pct:.1f}% тематического контента."
+            f"<strong>Наблюдение:</strong> Крупнейший источник сейчас — <strong>{escape(top_source)}</strong> "
+            f"с долей {top_source_share:.1f}%. HuggingFace-источники занимают {hf_pct:.1f}% объёма, "
+            f"а доменные данные составляют {domain_pct:.1f}%."
         ),
         "length_hist": (
             f"<strong>Наблюдение:</strong> Медиана длины текста — {median_len:.0f} символов, "
@@ -861,28 +963,26 @@ def build_insights(
             "Большинство текстов короткие — подходят для zero-shot классификации."
         ),
         "length_box": (
-            f"<strong>Наблюдение:</strong> RSS-источники содержат самые длинные тексты "
-            f"(до {max_rss} символов) — возможно HTML-разметка не очищена. "
-            "HuggingFace и форумы — короткие, однородные тексты."
+            f"<strong>Наблюдение:</strong> Источник <strong>{escape(str(longest_source))}</strong> "
+            f"содержит самые длинные тексты (до {max_source_len} символов). "
+            "Это хороший кандидат для дополнительной очистки и усечения."
         ),
         "wordcloud_all": (
-            "<strong>Наблюдение:</strong> В общем облаке видны технические термины "
-            "(sailing, yacht, boat), но также HTML-артефакты (wp, content, uploads, p). "
-            "DataQualityAgent должен удалить HTML-мусор."
+            f"<strong>Наблюдение:</strong> В общем облаке чаще всего встречаются термины: "
+            f"{escape(all_terms)}. Это помогает быстро проверить, что словарь соответствует теме "
+            f"<strong>{escape(topic)}</strong>."
         ),
         "wordcloud_domain": (
-            "<strong>Наблюдение:</strong> В тематическом облаке доминируют sailing, yacht, "
-            "boat, yachtingworld. HTML-артефакты всё ещё присутствуют — требуется чистка."
+            f"<strong>Наблюдение:</strong> В тематическом облаке доминируют: {escape(domain_terms)}. "
+            "Если здесь появляются слова из прошлой темы, отчёт нужно пересобрать на свежих артефактах."
         ),
         "quality_heatmap": (
-            f"<strong>Наблюдение:</strong> Критические проблемы: html_entities в RSS-источниках "
-            f"({rss_html:.0f}%), short_texts в sailingforums ({sailingforums_short:.0f}%). "
-            "Эти проблемы приоритет для DataQualityAgent."
+            f"<strong>Наблюдение:</strong> Самые заметные проблемы качества: {escape(issues_text)}. "
+            f"HTML-артефакты в RSS-источниках достигают {rss_html:.0f}% и должны быть очищены до аннотации."
         ),
         "top_words": (
-            "<strong>Наблюдение:</strong> Выбери источник в выпадающем списке. "
-            "У HuggingFace emotion — feel/feeling, у StackExchange — технические термины "
-            "sailing/navigation. Это подтверждает разницу доменов между источниками."
+            "<strong>Наблюдение:</strong> Выбери источник в выпадающем списке и сравни лексику. "
+            "Так проще увидеть, какие источники реально соответствуют теме, а какие добавляют общий шум."
         ),
     }
 
@@ -938,8 +1038,8 @@ def build_eda_assets(project_root: Path | None = None) -> dict[str, Any]:
 
     dataset_summary = client.build_dataset_summary(df)
     hypotheses = save_hypotheses(dataset_summary, root)
-    conclusions_html = build_conclusions_html(thematic_stats, quality_df)
-    insights = build_insights(df, source_df, thematic_stats, quality_df)
+    conclusions_html = build_conclusions_html(topic, thematic_stats, quality_df, source_df)
+    insights = build_insights(df, source_df, thematic_stats, quality_df, stopwords, topic)
 
     return {
         "df": df,
@@ -1011,7 +1111,10 @@ def export_eda_report(
         HTML_STYLE,
         "</head><body>",
         "<h1>EDA Report</h1>",
-        "<div class='subtitle'>Interactive EDA for the current smart-data-pipeline dataset.</div>",
+        (
+            "<div class='subtitle'>Interactive EDA for the current smart-data-pipeline dataset. "
+            f"Текущая тема: <strong>{escape(str(assets['topic']))}</strong>.</div>"
+        ),
         (
             "<div class='subtitle'>"
             f"<span class='stat-badge'>Rows: {assets['dataset_summary']['total_rows']}</span>"
@@ -1079,6 +1182,7 @@ def export_eda_report(
 
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text("\n".join(sections), encoding="utf-8")
+    save_eda_metadata(str(assets["topic"]), root)
     logger.info("EDA report exported to {}", report_path)
     return report_path
 

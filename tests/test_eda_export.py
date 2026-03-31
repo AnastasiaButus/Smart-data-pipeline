@@ -6,6 +6,8 @@ import json
 import sys
 from pathlib import Path
 
+import pandas as pd
+
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -81,3 +83,78 @@ def test_hypotheses_json_created(monkeypatch) -> None:
     payload = json.loads(hypotheses_path.read_text(encoding="utf-8"))
     assert isinstance(payload, list)
     assert len(payload) >= 3
+
+
+def test_eda_metadata_json_created(monkeypatch) -> None:
+    """EDA export should persist metadata describing the topic and input mtimes."""
+    monkeypatch.setattr(
+        export_eda.GeminiLLMClient,
+        "generate_stopwords",
+        lambda self, topic, base_stopwords: set(base_stopwords),
+    )
+    monkeypatch.setattr(
+        export_eda.GeminiLLMClient,
+        "generate_eda_hypotheses",
+        lambda self, dataset_summary: _mock_hypotheses(),
+    )
+
+    export_eda.export_eda_report(ROOT, ROOT / "reports" / "eda_report.html")
+
+    metadata_path = ROOT / "reports" / "eda_metadata.json"
+    assert metadata_path.exists()
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert "topic" in payload
+    assert "raw_dataset_mtime" in payload
+
+
+def test_build_insights_stays_topic_aware() -> None:
+    """Generic EDA insights should not hardcode sailing-specific wording for other topics."""
+    df = pd.DataFrame(
+        {
+            "text": [
+                "cars engine tuning speed track braking",
+                "cars maintenance garage diagnostics review",
+                "general emotion text unrelated",
+            ],
+            "source": [
+                "topic_bootstrap_guides",
+                "topic_bootstrap_forum",
+                "huggingface_demo",
+            ],
+            "text_len": [39, 41, 29],
+        }
+    )
+    source_df = export_eda.source_distribution_frame(df)
+    thematic_stats = export_eda.compute_thematic_stats(df)
+    quality_df = pd.DataFrame(
+        [
+            {
+                "source": "topic_bootstrap_guides",
+                "html_entities": 0.0,
+                "short_texts(<50)": 10.0,
+                "long_texts(>1000)": 0.0,
+                "duplicates_pct": 0.0,
+            },
+            {
+                "source": "huggingface_demo",
+                "html_entities": 5.0,
+                "short_texts(<50)": 50.0,
+                "long_texts(>1000)": 0.0,
+                "duplicates_pct": 0.0,
+            },
+        ]
+    )
+
+    insights = export_eda.build_insights(
+        df,
+        source_df,
+        thematic_stats,
+        quality_df,
+        stopwords=set(),
+        topic="cars",
+    )
+
+    combined = " ".join(insights.values()).lower()
+    assert "sailingforums" not in combined
+    assert "yachtingworld" not in combined
+    assert "cars" in combined

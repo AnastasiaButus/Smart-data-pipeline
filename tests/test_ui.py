@@ -36,6 +36,21 @@ def _write_config(base_dir: Path) -> None:
     )
 
 
+def _write_eda_metadata(base_dir: Path, topic: str) -> None:
+    """Create EDA metadata that matches the current temp-project artifacts."""
+    metadata = {
+        "topic": topic,
+        "normalized_topic": topic.strip().lower(),
+        "raw_dataset_mtime": (base_dir / "data" / "raw" / "dataset.parquet").stat().st_mtime,
+        "clean_dataset_mtime": (base_dir / "data" / "raw" / "dataset_clean.parquet").stat().st_mtime,
+        "annotated_dataset_mtime": (base_dir / "data" / "labeled" / "annotated.parquet").stat().st_mtime,
+    }
+    (base_dir / "reports" / "eda_metadata.json").write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
 @pytest.fixture
 def temp_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Create a small isolated project layout for UI helper tests."""
@@ -142,3 +157,23 @@ def test_collect_report_data_keys(temp_project: Path) -> None:
     assert isinstance(data, dict)
     assert {"topic", "total_rows", "classes", "steps_completed"} <= data.keys()
     assert data["topic"] == "sailing and yacht navigation"
+
+
+def test_collect_report_data_uses_fresh_hypotheses(temp_project: Path) -> None:
+    """Fresh EDA metadata should allow hypotheses to appear in generated reports."""
+    _write_eda_metadata(temp_project, "sailing and yacht navigation")
+
+    data = report_generator.collect_report_data()
+
+    assert data["eda_is_fresh"] is True
+    assert data["llm_hypotheses"] == ["Гипотеза 1", "Гипотеза 2", "Гипотеза 3"]
+
+
+def test_collect_report_data_skips_stale_hypotheses(temp_project: Path) -> None:
+    """EDA hypotheses should be hidden when metadata belongs to another topic."""
+    _write_eda_metadata(temp_project, "minecraft")
+
+    data = report_generator.collect_report_data()
+
+    assert data["eda_is_fresh"] is False
+    assert data["llm_hypotheses"] == []

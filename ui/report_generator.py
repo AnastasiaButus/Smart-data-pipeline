@@ -281,7 +281,13 @@ def collect_report_data() -> dict[str, Any]:
     context_memory = _read_json(PROJECT_ROOT / "reports" / "context_memory.json")
     domain_spec = _read_json(PROJECT_ROOT / "reports" / "domain_spec.json")
     quality_report = _read_text(PROJECT_ROOT / "reports" / "quality_report.md")
-    hypotheses = _read_json(PROJECT_ROOT / "reports" / "eda_hypotheses.json")
+    eda_metadata = _read_json(PROJECT_ROOT / "reports" / "eda_metadata.json")
+    eda_is_fresh = _is_eda_artifact_fresh(config, eda_metadata)
+    hypotheses = (
+        _read_json(PROJECT_ROOT / "reports" / "eda_hypotheses.json")
+        if eda_is_fresh
+        else []
+    )
 
     steps_completed = _extract_steps(context_memory)
     source_distribution = (
@@ -322,7 +328,58 @@ def collect_report_data() -> dict[str, Any]:
         "quality_report_excerpt": quality_report[:500],
         "llm_hypotheses": hypotheses if isinstance(hypotheses, list) else [],
         "domain_spec": domain_spec if isinstance(domain_spec, dict) else {},
+        "eda_is_fresh": eda_is_fresh,
     }
+
+
+def _is_eda_artifact_fresh(
+    config: dict[str, Any],
+    eda_metadata: dict[str, Any] | list[Any],
+) -> bool:
+    """Return True when EDA artifacts match the current topic and dataset timestamps."""
+    if not isinstance(eda_metadata, dict):
+        return False
+
+    current_topic = _normalize_topic_name(
+        str(config.get("domain", {}).get("topic", ""))
+    )
+    metadata_topic = _normalize_topic_name(
+        str(
+            eda_metadata.get("normalized_topic")
+            or eda_metadata.get("topic")
+            or ""
+        )
+    )
+    if not current_topic or current_topic != metadata_topic:
+        return False
+
+    latest_data_mtime = _latest_mtime(
+        [
+            PROJECT_ROOT / "data" / "raw" / "dataset.parquet",
+            PROJECT_ROOT / "data" / "raw" / "dataset_clean.parquet",
+            PROJECT_ROOT / "data" / "labeled" / "annotated.parquet",
+        ]
+    )
+    metadata_mtime = max(
+        float(eda_metadata.get("raw_dataset_mtime", 0.0) or 0.0),
+        float(eda_metadata.get("clean_dataset_mtime", 0.0) or 0.0),
+        float(eda_metadata.get("annotated_dataset_mtime", 0.0) or 0.0),
+    )
+    if latest_data_mtime <= 0 or metadata_mtime <= 0:
+        return False
+
+    return metadata_mtime >= latest_data_mtime
+
+
+def _latest_mtime(paths: list[Path]) -> float:
+    """Return the latest modification time across existing paths."""
+    mtimes = [path.stat().st_mtime for path in paths if path.exists()]
+    return max(mtimes) if mtimes else 0.0
+
+
+def _normalize_topic_name(topic: str) -> str:
+    """Normalize topic text for robust freshness checks."""
+    return " ".join(str(topic).strip().lower().split())
 
 
 def _read_parquet(path: Path) -> pd.DataFrame:
