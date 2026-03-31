@@ -414,12 +414,12 @@ def render_sidebar(llm_client: GeminiLLMClient) -> float:
     topic_value = st.sidebar.text_input(
         "Тема классификации",
         value=st.session_state.get("topic", ""),
-        key="sidebar_topic",
+        key="topic_input",
     )
     if topic_value != st.session_state.get("saved_topic", topic_value):
         st.session_state["saved_topic"] = topic_value
         st.rerun()
-    st.session_state["topic"] = topic_value.strip()
+    st.session_state["topic"] = topic_value
 
     if st.sidebar.button("🔄 Обновить классы через LLM", use_container_width=True):
         with st.spinner("Gemini уточняет тему и классы..."):
@@ -583,8 +583,9 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
     topic = st.text_input(
         "Тема пользователя",
         value=st.session_state.get("topic", ""),
-        key="onboarding_topic_input",
+        key="topic_input",
     ).strip()
+    st.session_state["topic"] = topic
     st.caption(
         "💡 Рекомендуем вводить тему на английском — "
         "модель bart-large-mnli обучена на английском, "
@@ -1092,7 +1093,7 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
     topic = st.text_input(
         "Тема пользователя",
         value=st.session_state.get("topic", ""),
-        key="onboarding_topic_input",
+        key="topic_input",
     ).strip()
     if topic:
         st.session_state["topic"] = topic
@@ -1760,7 +1761,7 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
     topic = st.text_input(
         "Тема пользователя",
         value=st.session_state.get("topic", ""),
-        key="onboarding_topic_input",
+        key="topic_input",
     ).strip()
     if topic:
         st.session_state["topic"] = topic
