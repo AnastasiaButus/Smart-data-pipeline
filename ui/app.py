@@ -242,6 +242,45 @@ def find_sources_with_llm(topic: str, llm_client: GeminiLLMClient) -> dict[str, 
     return heuristic_source_suggestions(topic)
 
 
+def get_topic_emoji(topic: str) -> str:
+    """Return an emoji matching the current topic, with LLM fallback."""
+    topic_lower = str(topic or "").lower()
+    emoji_map = [
+        (["sail", "yacht", "boat", "ship", "marine", "nautical", "ocean", "sea", "naval"], "⛵"),
+        (["medical", "health", "doctor", "disease", "hospital", "pharma"], "🏥"),
+        (["food", "cook", "recipe", "restaurant", "cuisine", "chef"], "🍳"),
+        (["tech", "software", "code", "program", "computer", "ai", "ml"], "💻"),
+        (["sport", "football", "soccer", "tennis", "basketball", "athlete"], "⚽"),
+        (["finance", "stock", "crypto", "invest", "trading", "bank"], "📈"),
+        (["travel", "tourism", "hotel", "flight", "destination"], "✈️"),
+        (["science", "research", "physics", "chemistry", "biology"], "🔬"),
+        (["music", "song", "artist", "band", "concert", "album"], "🎵"),
+        (["film", "movie", "cinema", "actor", "director"], "🎬"),
+        (["law", "legal", "court", "judge", "lawyer"], "⚖️"),
+        (["climate", "weather", "environment", "nature", "ecology"], "🌍"),
+    ]
+    for keywords, emoji in emoji_map:
+        if any(keyword in topic_lower for keyword in keywords):
+            return emoji
+
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+        client = GeminiLLMClient(config_path=str(CONFIG_PATH))
+        if client.is_available():
+            result = client.generate(
+                f"Reply with ONLY one emoji that best represents this topic: '{topic}'. One emoji, nothing else.",
+                use_pipeline_context=False,
+            )
+            candidate = result.strip()
+            if candidate and len(candidate) <= 4:
+                return candidate
+    except Exception:
+        pass
+    return "📊"
+
+
 def update_classes_with_llm(llm_client: GeminiLLMClient) -> None:
     """Refresh recommended classes from the current dataset summary."""
     dataset_df = get_best_dataset()
@@ -512,7 +551,16 @@ def render_sidebar(llm_client: GeminiLLMClient) -> float:
 
 def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
     """Render onboarding flow for topic and source discovery."""
-    st.title("⛵ Smart Data Pipeline")
+    cfg = load_config()
+    topic = st.session_state.get(
+        "current_topic",
+        st.session_state.get(
+            "topic",
+            cfg.get("domain", {}).get("topic", "data pipeline"),
+        ),
+    )
+    topic_emoji = get_topic_emoji(topic)
+    st.title(f"{topic_emoji} Smart Data Pipeline")
 
     if st.session_state.get("topic") and not st.session_state.get("editing_topic", False):
         st.subheader("Текущая конфигурация домена")
@@ -1396,20 +1444,22 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
         return
 
     st.subheader("Введите тему для классификации текстов")
-    topic = st.text_input(
+    user_topic = st.text_input(
         "Тема пользователя",
-        value=st.session_state.get("topic", ""),
-        key="onboarding_topic_input",
+        value=topic,
+        key="topic_input",
     ).strip()
-    if topic:
-        st.session_state["topic"] = topic
+    if user_topic != topic:
+        st.session_state["current_topic"] = user_topic
+    if user_topic:
+        st.session_state["topic"] = user_topic
 
     if "selected_items" not in st.session_state:
         st.session_state["selected_items"] = {}
 
     if st.button("🔍 Найти источники данных", key="find_sources_button"):
         with st.spinner("Gemini ищет источники..."):
-            suggestion_payload = find_sources_with_llm(topic, llm_client)
+            suggestion_payload = find_sources_with_llm(user_topic, llm_client)
         st.session_state["source_suggestions"] = suggestion_payload.get("sources", [])
         if suggestion_payload.get("suggested_classes"):
             st.session_state["current_classes"] = [
@@ -1759,26 +1809,32 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
                     item_key = f"{source_name}_{item['name']}"
                     if item_key not in st.session_state["selected_items"]:
                         st.session_state["selected_items"][item_key] = item.get("enabled", True)
+                    is_disabled = item.get("disabled", False)
 
                     c1, c2, c3, c4 = st.columns([0.45, 0.2, 0.25, 0.1])
 
                     with c1:
-                        if item.get("disabled"):
-                            st.checkbox(
-                                item["name"],
-                                value=False,
-                                disabled=True,
-                                key=f"cb_{item_key}",
-                                help="Датасет содержит числовые данные, не тексты. Недоступен для выбора.",
-                            )
+                        checked = st.checkbox(
+                            item["name"],
+                            value=(
+                                False
+                                if is_disabled
+                                else st.session_state["selected_items"].get(
+                                    item_key,
+                                    item.get("enabled", True),
+                                )
+                            ),
+                            disabled=is_disabled,
+                            key=f"cb_{item_key}",
+                            help=(
+                                "⚠️ Датасет содержит числовые данные, не тексты. Недоступен для выбора."
+                                if is_disabled
+                                else None
+                            ),
+                        )
+                        if is_disabled:
                             st.session_state["selected_items"][item_key] = False
-                            checked = False
                         else:
-                            checked = st.checkbox(
-                                item["name"],
-                                value=st.session_state["selected_items"][item_key],
-                                key=f"cb_{item_key}",
-                            )
                             st.session_state["selected_items"][item_key] = checked
 
                     c2.caption(f"~{item.get('rows', '?')}")
@@ -1886,13 +1942,15 @@ def build_sources_detail(sources_data: list[Any]) -> dict[str, Any]:
                     "name": "sailing-boats database",
                     "url": "https://www.kaggle.com/datasets/opendatasource/sailing-boats",
                     "rows": 200,
-                    "enabled": True,
+                    "enabled": False,
+                    "disabled": True,
                 },
                 {
                     "name": "ocean ship logbooks 1750-1850",
                     "url": "https://www.kaggle.com/datasets/cwiloc/climate-data-from-ocean-ships",
                     "rows": 200,
-                    "enabled": True,
+                    "enabled": False,
+                    "disabled": True,
                 },
             ],
         },
