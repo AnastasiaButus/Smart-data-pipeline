@@ -1441,30 +1441,38 @@ def render_analytics_tab(threshold: float) -> None:
         st.markdown("**EDA ноутбук**")
         st.caption("Исходный анализ данных с графиками")
         st.code(
-            "powershell -ExecutionPolicy Bypass -File .\\scripts\\open_notebook.ps1 notebooks/eda.ipynb",
+            "New-Item -ItemType Directory -Force -Path .jupyter_runtime\\runtime | Out-Null\n"
+            "$env:JUPYTER_CONFIG_DIR = \"$PWD\\.jupyter_runtime\"\n"
+            "$env:JUPYTER_RUNTIME_DIR = \"$PWD\\.jupyter_runtime\\runtime\"\n"
+            "$env:JUPYTER_ALLOW_INSECURE_WRITES = \"true\"\n"
+            ".venv\\Scripts\\python.exe -m notebook notebooks/eda.ipynb",
             language="powershell",
         )
         st.caption(
-            "💡 Скрипт сам поднимет локальный Jupyter из `.venv`, создаст runtime-папки "
-            "и откроет EDA ноутбук в браузере."
+            "💡 Эта команда использует Python из проекта, локальные runtime-папки и "
+            "не сваливается в глобальный Anaconda Jupyter."
         )
 
     with notebook_col2:
         st.markdown("**AL эксперимент**")
         st.caption("Сравнение стратегий Active Learning")
         st.code(
-            "powershell -ExecutionPolicy Bypass -File .\\scripts\\open_notebook.ps1 notebooks/al_experiment.ipynb",
+            "New-Item -ItemType Directory -Force -Path .jupyter_runtime\\runtime | Out-Null\n"
+            "$env:JUPYTER_CONFIG_DIR = \"$PWD\\.jupyter_runtime\"\n"
+            "$env:JUPYTER_RUNTIME_DIR = \"$PWD\\.jupyter_runtime\\runtime\"\n"
+            "$env:JUPYTER_ALLOW_INSECURE_WRITES = \"true\"\n"
+            ".venv\\Scripts\\python.exe -m notebook notebooks/al_experiment.ipynb",
             language="powershell",
         )
         st.caption(
-            "💡 Тот же скрипт работает и для AL ноутбука: без ручной настройки env var "
-            "и без системного `jupyter.exe`."
+            "💡 Для второго ноутбука используйте ту же схему: локальный config, локальный "
+            "runtime и `notebook` из `.venv`, а не системный `jupyter.exe`."
         )
 
     st.info(
         "💡 Запускайте команды из папки проекта. "
-        "Скрипт изолирует Jupyter от глобального пользовательского конфига, запускает "
-        "локальный сервер из `.venv` и сам пытается открыть нужный ноутбук в браузере."
+        "Они изолируют Jupyter от глобального пользовательского конфига, не используют "
+        "сломанный Anaconda path и открывают ноутбук в корректном окружении проекта."
     )
     st.caption(
         "🔁 Если вы сменили тему или заново прогнали pipeline, в ноутбуке нужно сделать "
