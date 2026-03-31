@@ -885,9 +885,12 @@ def render_analytics_tab(threshold: float) -> None:
         st.markdown("**AL эксперимент**")
         st.caption("Сравнение стратегий Active Learning")
         st.code(
-            ".venv\\Scripts\\activate\n"
             "jupyter notebook notebooks/al_experiment.ipynb",
             language="bash",
+        )
+        st.caption(
+            "💡 Запускать БЕЗ активации .venv — "
+            "использовать Anaconda окружение напрямую"
         )
 
     st.info(
