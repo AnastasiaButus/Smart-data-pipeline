@@ -1259,13 +1259,15 @@ def build_sources_detail(sources_data: list[Any]) -> dict[str, Any]:
                     "name": "sailing-boats database",
                     "url": "https://www.kaggle.com/datasets/opendatasource/sailing-boats",
                     "rows": 200,
-                    "enabled": True,
+                    "enabled": False,
+                    "disabled": True,
                 },
                 {
                     "name": "ocean ship logbooks 1750-1850",
                     "url": "https://www.kaggle.com/datasets/cwiloc/climate-data-from-ocean-ships",
                     "rows": 200,
-                    "enabled": True,
+                    "enabled": False,
+                    "disabled": True,
                 },
             ],
         },
@@ -1747,37 +1749,46 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
                     )
 
                 st.markdown("---")
-                cols = st.columns([0.4, 0.15, 0.15, 0.2, 0.1])
+                cols = st.columns([0.45, 0.2, 0.25, 0.1])
                 cols[0].markdown("**Название**")
                 cols[1].markdown("**Строк**")
-                cols[2].markdown("**Лицензия**")
-                cols[3].markdown("**Разрешение**")
-                cols[4].markdown("**Ссылка**")
+                cols[2].markdown("**Разрешение**")
+                cols[3].markdown("**Ссылка**")
 
                 for item in source_data["items"]:
                     item_key = f"{source_name}_{item['name']}"
                     if item_key not in st.session_state["selected_items"]:
                         st.session_state["selected_items"][item_key] = item.get("enabled", True)
 
-                    c1, c2, c3, c4, c5 = st.columns([0.4, 0.15, 0.15, 0.2, 0.1])
+                    c1, c2, c3, c4 = st.columns([0.45, 0.2, 0.25, 0.1])
 
                     with c1:
-                        checked = st.checkbox(
-                            item["name"],
-                            value=st.session_state["selected_items"][item_key],
-                            key=f"cb_{item_key}",
-                        )
-                        st.session_state["selected_items"][item_key] = checked
+                        if item.get("disabled"):
+                            st.checkbox(
+                                item["name"],
+                                value=False,
+                                disabled=True,
+                                key=f"cb_{item_key}",
+                                help="Датасет содержит числовые данные, не тексты. Недоступен для выбора.",
+                            )
+                            st.session_state["selected_items"][item_key] = False
+                            checked = False
+                        else:
+                            checked = st.checkbox(
+                                item["name"],
+                                value=st.session_state["selected_items"][item_key],
+                                key=f"cb_{item_key}",
+                            )
+                            st.session_state["selected_items"][item_key] = checked
 
                     c2.caption(f"~{item.get('rows', '?')}")
-                    c3.caption(item.get("license", "—"))
-                    c4.caption(source_data.get("risk", "—"))
+                    c3.caption(source_data.get("risk", "—"))
 
                     item_url = str(item.get("url", "")).strip()
                     if item_url:
-                        c5.link_button("🔗", item_url)
+                        c4.link_button("🔗", item_url)
                     else:
-                        c5.caption("—")
+                        c4.caption("—")
 
                     if checked:
                         total_selected += 1

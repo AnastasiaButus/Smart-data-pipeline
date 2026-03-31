@@ -96,6 +96,41 @@ def test_huggingface_fetch(agent: DataCollectionAgent) -> None:
     assert result["source"].str.startswith("huggingface_").all()
 
 
+def test_huggingface_validates_text_column(agent: DataCollectionAgent) -> None:
+    """fetch_huggingface() should reject non-text 'text' columns and use a valid fallback column."""
+
+    class _MockDataset:
+        def to_pandas(self) -> pd.DataFrame:
+            return pd.DataFrame(
+                {
+                    "text": ["1", "2", "3"],
+                    "description": [
+                        "This is a long sailing text about navigation and coastal weather.",
+                        "Another descriptive yacht passage note with meaningful words.",
+                        "A third long text about boats, anchors, and route planning.",
+                    ],
+                }
+            )
+
+    custom_agent = DataCollectionAgent(config_path=CONFIG_PATH)
+    custom_agent._cfg["sources"]["huggingface"]["datasets"] = [
+        {
+            "name": "mock/sailing-texts",
+            "split": "train",
+            "text_column": "text",
+            "limit": 3,
+        }
+    ]
+    custom_agent.config = custom_agent._cfg
+
+    with patch("datasets.load_dataset", return_value=_MockDataset()):
+        result = custom_agent.fetch_huggingface()
+
+    assert isinstance(result, pd.DataFrame)
+    assert len(result) == 3
+    assert result["text"].str.contains("sailing|yacht|boats", case=False, regex=True).any()
+
+
 # ------------------------------------------------------------------ #
 #  6. RSS graceful degradation                                         #
 # ------------------------------------------------------------------ #

@@ -65,10 +65,28 @@ class DataCollectionAgent:
             try:
                 logger.info("Fetching HuggingFace dataset {} split={}", name, split)
                 dataset = load_dataset(name, split=split)
-                df = dataset.to_pandas()
-                if text_col not in df.columns:
+                df_raw = dataset.to_pandas()
+                if text_col in df_raw.columns:
+                    if not self._is_text_column(df_raw[text_col]):
+                        logger.warning(
+                            "HuggingFace {}: column '{}' doesn't look like text (avg_len too short or low diversity). Skipping.",
+                            name,
+                            text_col,
+                        )
+                        str_cols = df_raw.select_dtypes(include="object").columns
+                        text_col = None
+                        for col in str_cols:
+                            if self._is_text_column(df_raw[col]):
+                                text_col = col
+                                logger.info("Auto-detected text column: {}", col)
+                                break
+                        if not text_col:
+                            logger.warning("No text column found in {}, skipping", name)
+                            continue
+                if text_col not in df_raw.columns:
                     text_col = next(
-                        (c for c in df.columns if df[c].dtype == object), None
+                        (c for c in df_raw.columns if df_raw[c].dtype == object and self._is_text_column(df_raw[c])),
+                        None,
                     )
                     if text_col is None:
                         logger.warning("No text column found in {}", name)
@@ -76,7 +94,7 @@ class DataCollectionAgent:
                     logger.warning(
                         "Column 'text' not found in {}, using '{}'", name, text_col
                     )
-                df = df[[text_col]].rename(columns={text_col: "text"})
+                df = df_raw[[text_col]].rename(columns={text_col: "text"})
                 df = df.head(limit)
                 slug = name.replace("/", "_")
                 df["source"] = f"huggingface_{slug}"
