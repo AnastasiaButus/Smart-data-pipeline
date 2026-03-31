@@ -890,6 +890,25 @@ def render_analytics_tab(threshold: float) -> None:
         "Ноутбуки откроются в браузере автоматически."
     )
 
+    st.divider()
+    st.subheader("📓 Открыть ноутбуки")
+
+    notebook_open_col1, notebook_open_col2 = st.columns(2)
+
+    with notebook_open_col1:
+        st.markdown("**EDA — анализ данных**")
+        st.caption("8 интерактивных графиков, WordCloud, LLM-гипотезы о датасете")
+        st.code("jupyter notebook notebooks/eda.ipynb", language="bash")
+        st.caption("💡 Скопируйте команду и запустите в терминале из папки проекта")
+
+    with notebook_open_col2:
+        st.markdown("**AL эксперимент**")
+        st.caption("Сравнение стратегий Active Learning: entropy vs margin vs random")
+        st.code("jupyter notebook notebooks/al_experiment.ipynb", language="bash")
+        st.caption("💡 Скопируйте команду и запустите в терминале из папки проекта")
+
+    st.info("🚀 Или запустите все ноутбуки сразу: `jupyter notebook notebooks/`")
+
     st.subheader("📋 Сформировать отчёт")
     section_col1, section_col2 = st.columns(2)
     with section_col1:
@@ -1060,7 +1079,16 @@ def render_chat_tab(llm_client: GeminiLLMClient) -> None:
 
 def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
     """Render onboarding flow for topic and source discovery."""
-    st.title("⛵ Smart Data Pipeline")
+    cfg = load_config()
+    topic = st.session_state.get(
+        "current_topic",
+        st.session_state.get(
+            "topic",
+            cfg.get("domain", {}).get("topic", "data pipeline"),
+        ),
+    )
+    topic_emoji = get_topic_emoji(topic)
+    st.title(f"{topic_emoji} Smart Data Pipeline")
 
     if st.session_state.get("topic") and not st.session_state.get("editing_topic", False):
         st.subheader("Текущая конфигурация домена")
@@ -1744,20 +1772,38 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
         return
 
     st.subheader("Введите тему для классификации текстов")
-    topic = st.text_input(
+    user_topic = st.text_input(
         "Тема пользователя",
-        value=st.session_state.get("topic", ""),
-        key="onboarding_topic_input",
+        value=topic,
+        key="topic_input",
     ).strip()
-    if topic:
-        st.session_state["topic"] = topic
+    if user_topic != topic:
+        st.session_state["current_topic"] = user_topic
+    if user_topic:
+        st.session_state["topic"] = user_topic
+
+    st.caption(
+        "💡 Рекомендуем вводить тему на английском — модель bart-large-mnli обучена на английском, "
+        "это улучшает качество авторазметки."
+    )
+    st.markdown("---")
+    st.markdown("**🎯 Что делает этот пайплайн:**")
+    st.caption(
+        "Собирает тексты из нескольких источников → очищает данные → автоматически размечает "
+        "по заданным классам → предлагает спорные примеры на ручную проверку → обучает "
+        "классификатор. Работает для любой темы."
+    )
+    st.caption(
+        "📝 Модальность: текст  |  🤖 Авторазметка: zero-shot (bart-large-mnli)  |  "
+        "🧠 Классификатор: TF-IDF + LogReg  |  🔮 Upgrade: DistilBERT (в разработке)"
+    )
 
     if "selected_items" not in st.session_state:
         st.session_state["selected_items"] = {}
 
     if st.button("🔍 Найти источники данных", key="find_sources_button"):
         with st.spinner("Gemini ищет источники..."):
-            suggestion_payload = find_sources_with_llm(topic, llm_client)
+            suggestion_payload = find_sources_with_llm(user_topic, llm_client)
         st.session_state["source_suggestions"] = suggestion_payload.get("sources", [])
         if suggestion_payload.get("suggested_classes"):
             st.session_state["current_classes"] = [
