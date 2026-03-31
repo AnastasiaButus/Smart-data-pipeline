@@ -85,6 +85,15 @@ def generate_html_report(sections: dict[str, bool], data: dict[str, Any]) -> str
             "<div class='card'><h2>Источники данных</h2><ul>"
             f"{source_items}</ul></div>"
         )
+        if data.get("selected_sources"):
+            selected_items = "".join(
+                f"<li>{escape(str(name))}</li>"
+                for name in data.get("selected_sources", [])
+            )
+            parts.append(
+                "<div class='card'><h2>Подтверждено в онбординге</h2><ul>"
+                f"{selected_items}</ul></div>"
+            )
 
     if sections.get("before_cleaning"):
         parts.append(
@@ -170,6 +179,11 @@ def generate_markdown_report(sections: dict[str, bool], data: dict[str, Any]) ->
         for name, count in data.get("source_distribution", {}).items():
             lines.append(f"- {name}: {count}")
         lines.append("")
+        if data.get("selected_sources"):
+            lines.append("## Подтверждено в онбординге")
+            for name in data.get("selected_sources", []):
+                lines.append(f"- {name}")
+            lines.append("")
 
     if sections.get("before_cleaning"):
         lines.extend(
@@ -273,6 +287,11 @@ def collect_report_data() -> dict[str, Any]:
     topic = str(config.get("domain", {}).get("topic", "не задана"))
     classes = list(config.get("domain", {}).get("classes", []))
     review_label = str(config.get("domain", {}).get("review_label", "other_or_offtopic"))
+    selected_sources = [
+        str(item).strip()
+        for item in config.get("sources", {}).get("selected", [])
+        if str(item).strip()
+    ]
 
     raw_df = _read_parquet(PROJECT_ROOT / "data" / "raw" / "dataset.parquet")
     clean_df = _read_parquet(PROJECT_ROOT / "data" / "raw" / "dataset_clean.parquet")
@@ -322,6 +341,7 @@ def collect_report_data() -> dict[str, Any]:
         if not annotated_df.empty and "confidence" in annotated_df.columns
         else 0.0,
         "source_distribution": source_distribution,
+        "selected_sources": selected_sources,
         "label_distribution": label_distribution,
         "steps_completed": steps_completed,
         "rows_removed": max(int(len(raw_df)) - int(len(clean_df)), 0),

@@ -25,6 +25,12 @@ def _write_config(base_dir: Path) -> None:
             "classes": ["navigation", "safety", "equipment", "weather", "licensing"],
             "review_label": "other_or_offtopic",
         },
+        "sources": {
+            "selected": [
+                "Media / docs / Yachting World",
+                "Communities / forums / Cruisers Forum",
+            ],
+        },
         "data": {
             "raw_path": "data/raw",
             "labeled_path": "data/labeled",
@@ -158,6 +164,10 @@ def test_collect_report_data_keys(temp_project: Path) -> None:
     assert isinstance(data, dict)
     assert {"topic", "total_rows", "classes", "steps_completed"} <= data.keys()
     assert data["topic"] == "sailing and yacht navigation"
+    assert data["selected_sources"] == [
+        "Media / docs / Yachting World",
+        "Communities / forums / Cruisers Forum",
+    ]
 
 
 def test_collect_report_data_uses_fresh_hypotheses(temp_project: Path) -> None:

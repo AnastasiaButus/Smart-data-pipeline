@@ -1579,6 +1579,23 @@ def render_analytics_tab(threshold: float) -> None:
         )
         st.plotly_chart(fig_conf, use_container_width=True)
 
+    selected_source_labels = [
+        str(item).strip()
+        for item in load_config().get("sources", {}).get("selected", [])
+        if str(item).strip()
+    ]
+    if selected_source_labels:
+        st.markdown("**Подтверждено в онбординге**")
+        st.caption(
+            "Список ниже показывает, что пользователь подтвердил на первом экране. "
+            "После нового прогона pipeline фактические источники датасета должны ему соответствовать."
+        )
+        st.dataframe(
+            pd.DataFrame({"Источник": selected_source_labels}),
+            use_container_width=True,
+            hide_index=True,
+        )
+
     source_table_df = build_source_table(get_best_dataset())
     if not source_table_df.empty:
         st.markdown("**Источники в текущем датасете**")

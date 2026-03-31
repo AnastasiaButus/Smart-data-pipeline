@@ -45,6 +45,104 @@ class DataCollectionAgent:
         self._reports_path.mkdir(parents=True, exist_ok=True)
         logger.info("DataCollectionAgent initialised from {}", self._config_path)
 
+    def _selected_source_labels(self) -> list[str]:
+        """Return onboarding-confirmed source labels from config."""
+        return [
+            str(item).strip()
+            for item in self._cfg.get("sources", {}).get("selected", [])
+            if str(item).strip()
+        ]
+
+    def _normalize_source_token(self, value: str) -> str:
+        """Normalize source labels so UI names and config values compare robustly."""
+        normalized = (
+            str(value or "")
+            .strip()
+            .lower()
+            .replace("°", " ")
+            .replace("º", " ")
+            .replace("в°", " ")
+            .replace("&", " and ")
+        )
+        normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+        return " ".join(normalized.split())
+
+    def _selected_source_names(self) -> set[str]:
+        """Extract concrete item names from grouped onboarding labels."""
+        selected_names: set[str] = set()
+        for label in self._selected_source_labels():
+            parts = [part.strip() for part in str(label).split(" / ") if part.strip()]
+            tail = parts[-1] if parts else label
+            normalized = self._normalize_source_token(tail)
+            if normalized:
+                selected_names.add(normalized)
+        return selected_names
+
+    def _has_source_selection(self) -> bool:
+        """Return True when onboarding explicitly confirmed sources."""
+        return bool(self._selected_source_labels())
+
+    def _is_source_selected(self, *aliases: str) -> bool:
+        """Return True when one of the aliases is present in onboarding selection."""
+        selected_names = self._selected_source_names()
+        if not selected_names:
+            return True
+        return any(
+            self._normalize_source_token(alias) in selected_names
+            for alias in aliases
+            if str(alias).strip()
+        )
+
+    def _rss_display_name(self, feed_url: str) -> str:
+        """Map configured RSS URLs to the granular UI display names."""
+        domain = urlparse(feed_url).netloc.lower().removeprefix("www.")
+        mapping = {
+            "yachtingworld.com": "Yachting World",
+            "cruisingworld.com": "Cruising World",
+            "sailmagazine.com": "Sail Magazine",
+            "48north.com": "48° North",
+        }
+        return mapping.get(domain, domain)
+
+    def _sailing_huggingface_selected(self) -> bool:
+        """Return True when at least one sailing HF dataset is selected."""
+        if not self._has_source_selection():
+            return True
+        datasets = self._cfg.get("sources", {}).get("huggingface", {}).get("datasets", [])
+        return any(
+            self._is_source_selected(str(ds_spec.get("name", "")))
+            for ds_spec in datasets
+        )
+
+    def _sailing_rss_selected(self) -> bool:
+        """Return True when at least one sailing RSS feed is selected."""
+        if not self._has_source_selection():
+            return True
+        feeds = self._cfg.get("sources", {}).get("rss", {}).get("feeds", [])
+        return any(
+            self._is_source_selected(self._rss_display_name(feed_url), urlparse(feed_url).netloc)
+            for feed_url in feeds
+        )
+
+    def _sailing_forum_selected(self) -> bool:
+        """Return True when at least one sailing forum is selected."""
+        if not self._has_source_selection():
+            return True
+        return self._is_source_selected("Cruisers Forum", "Sailing Forums")
+
+    def _sailing_stackexchange_selected(self) -> bool:
+        """Return True when StackExchange is selected in onboarding."""
+        if not self._has_source_selection():
+            return True
+        se_cfg = self._cfg.get("sources", {}).get("stackexchange", {})
+        site = str(se_cfg.get("site", "outdoors")).strip() or "outdoors"
+        tag = str(se_cfg.get("tag", "sailing")).strip() or "sailing"
+        return self._is_source_selected(
+            f"{site}.stackexchange.com [{tag}]",
+            f"{site}.stackexchange.com {tag}",
+            f"stackexchange {tag}",
+        )
+
     # ------------------------------------------------------------------ #
     #  Source: HuggingFace                                                 #
     # ------------------------------------------------------------------ #
@@ -59,7 +157,18 @@ class DataCollectionAgent:
             return self._empty_df()
 
         frames: list[pd.DataFrame] = []
-        for ds_spec in hf_cfg.get("datasets", []):
+        dataset_specs = list(hf_cfg.get("datasets", []))
+        if self._has_source_selection():
+            dataset_specs = [
+                ds_spec
+                for ds_spec in dataset_specs
+                if self._is_source_selected(str(ds_spec.get("name", "")))
+            ]
+            if not dataset_specs:
+                logger.info("No HuggingFace datasets selected in onboarding")
+                return self._empty_df()
+
+        for ds_spec in dataset_specs:
             name: str = ds_spec["name"]
             split: str = ds_spec.get("split", "train")
             text_col: str = ds_spec.get("text_column", "text")
@@ -130,9 +239,15 @@ class DataCollectionAgent:
             return self._empty_df()
 
         forum_cfg = scraping_cfg.get("cruisers_forum", {})
-        if not forum_cfg.get("enabled", True):
-            logger.info("Cruisers Forum scraping disabled in config")
-            return self._empty_df()
+        if self._has_source_selection():
+            run_cruisers = forum_cfg.get("enabled", True) and self._is_source_selected("Cruisers Forum")
+            run_sailingforums = self._is_source_selected("Sailing Forums")
+            if not (run_cruisers or run_sailingforums):
+                logger.info("No forum sources selected in onboarding")
+                return self._empty_df()
+        else:
+            run_cruisers = forum_cfg.get("enabled", True)
+            run_sailingforums = True
 
         # --- Variant A: Cruisers Forum with browser UA ---
         cf_base = forum_cfg.get("base_url", "https://www.cruisersforum.com")
@@ -140,21 +255,22 @@ class DataCollectionAgent:
         pages_per_section: int = forum_cfg.get("pages_per_section", 3)
         collected_frames: list[pd.DataFrame] = []
 
-        if self._is_crawl_allowed(cf_base, _BROWSER_UA):
+        if run_cruisers and self._is_crawl_allowed(cf_base, _BROWSER_UA):
             result = self._scrape_cruisers_forum(cf_base, sections, pages_per_section)
             if not result.empty:
                 collected_frames.append(result)
             else:
                 logger.info("Cruisers Forum returned 0 rows")
-        else:
+        elif run_cruisers:
             logger.warning(
                 "robots.txt blocks crawling on {} — skipping this forum source", cf_base
             )
 
         # --- Variant B: sailingforums.com ---
-        fallback_result = self._scrape_sailingforums()
-        if not fallback_result.empty:
-            collected_frames.append(fallback_result)
+        if run_sailingforums:
+            fallback_result = self._scrape_sailingforums()
+            if not fallback_result.empty:
+                collected_frames.append(fallback_result)
 
         if not collected_frames:
             return self._empty_df()
@@ -268,6 +384,18 @@ class DataCollectionAgent:
             return self._empty_df()
 
         feeds: list[str] = rss_cfg.get("feeds", [])
+        if self._has_source_selection():
+            feeds = [
+                feed_url
+                for feed_url in feeds
+                if self._is_source_selected(
+                    self._rss_display_name(feed_url),
+                    urlparse(feed_url).netloc,
+                )
+            ]
+            if not feeds:
+                logger.info("No RSS feeds selected in onboarding")
+                return self._empty_df()
         records: list[dict] = []
 
         for feed_url in feeds:
@@ -323,6 +451,13 @@ class DataCollectionAgent:
         site = str(se_cfg.get("site", "outdoors")).strip() or "outdoors"
         tag = str(se_cfg.get("tag", "sailing")).strip() or "sailing"
         tag_slug = re.sub(r"[^a-z0-9]+", "_", tag.lower()).strip("_") or "tagged"
+        if self._has_source_selection() and not self._is_source_selected(
+            f"{site}.stackexchange.com [{tag}]",
+            f"{site}.stackexchange.com {tag}",
+            f"stackexchange {tag}",
+        ):
+            logger.info("StackExchange source not selected in onboarding")
+            return self._empty_df()
 
         # robots.txt check on API domain — best practice
         if not self._is_crawl_allowed(api_root, self._USER_AGENT):
@@ -535,14 +670,14 @@ class DataCollectionAgent:
         topic = self._get_current_topic()
         source_fns = {"kaggle": self.fetch_kaggle}
         if self._is_sailing_topic(topic):
-            source_fns.update(
-                {
-                    "huggingface": self.fetch_huggingface,
-                    "forum": self.scrape_forum,
-                    "rss": self.fetch_rss,
-                    "stackexchange": self.fetch_stackexchange,
-                }
-            )
+            if self._sailing_huggingface_selected():
+                source_fns["huggingface"] = self.fetch_huggingface
+            if self._sailing_forum_selected():
+                source_fns["forum"] = self.scrape_forum
+            if self._sailing_rss_selected():
+                source_fns["rss"] = self.fetch_rss
+            if self._sailing_stackexchange_selected():
+                source_fns["stackexchange"] = self.fetch_stackexchange
         else:
             source_fns["topic_bootstrap"] = self.fetch_topic_bootstrap
             if self._has_topic_specific_huggingface(topic):

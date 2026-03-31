@@ -22,7 +22,10 @@ REQUIRED_COLUMNS = ["id", "text", "label", "source", "collected_at"]
 @pytest.fixture
 def agent() -> DataCollectionAgent:
     """Create a DataCollectionAgent pointed at the real config."""
-    return DataCollectionAgent(config_path=CONFIG_PATH)
+    instance = DataCollectionAgent(config_path=CONFIG_PATH)
+    instance._cfg.setdefault("sources", {})["selected"] = []
+    instance.config = instance._cfg
+    return instance
 
 
 # ------------------------------------------------------------------ #
@@ -113,6 +116,8 @@ def test_huggingface_validates_text_column(agent: DataCollectionAgent) -> None:
             )
 
     custom_agent = DataCollectionAgent(config_path=CONFIG_PATH)
+    custom_agent._cfg.setdefault("sources", {})["selected"] = []
+    custom_agent.config = custom_agent._cfg
     custom_agent._cfg["sources"]["huggingface"]["datasets"] = [
         {
             "name": "mock/sailing-texts",
@@ -416,3 +421,39 @@ def test_run_skips_sailing_sources_for_non_sailing_topic(
     assert result["text"].str.contains("minecraft", case=False, regex=False).any()
     assert result["source"].astype(str).str.startswith("topic_bootstrap").any()
     assert not result["source"].astype(str).eq("synthetic").all()
+
+
+def test_run_respects_confirmed_sailing_source_selection(
+    agent: DataCollectionAgent,
+    tmp_path: Path,
+) -> None:
+    """Sailing collector should use only onboarding-confirmed source families."""
+    agent._cfg["domain"]["topic"] = "sailing and yacht navigation"
+    agent._cfg["sources"]["selected"] = ["Media / docs / Yachting World"]
+    agent.config = agent._cfg
+    agent._raw_path = tmp_path / "raw"
+    agent._raw_path.mkdir()
+    agent._reports_path = tmp_path / "reports"
+    agent._reports_path.mkdir()
+
+    rss_df = pd.DataFrame(
+        {
+            "text": ["A long yachtingworld article summary about passage planning and weather routing."],
+            "label": ["unlabeled"],
+            "source": ["rss_www.yachtingworld.com"],
+            "collected_at": ["2024-01-01T00:00:00+00:00"],
+        }
+    )
+
+    with (
+        patch.object(agent, "fetch_kaggle", return_value=agent._empty_df()),
+        patch.object(agent, "fetch_huggingface", side_effect=AssertionError("huggingface should be skipped")),
+        patch.object(agent, "scrape_forum", side_effect=AssertionError("forum should be skipped")),
+        patch.object(agent, "fetch_stackexchange", side_effect=AssertionError("stackexchange should be skipped")),
+        patch.object(agent, "fetch_rss", return_value=rss_df),
+    ):
+        result = agent.run()
+
+    assert isinstance(result, pd.DataFrame)
+    assert len(result) == 1
+    assert result["source"].tolist() == ["rss_www.yachtingworld.com"]
