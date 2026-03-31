@@ -414,7 +414,10 @@ def render_sidebar(llm_client: GeminiLLMClient) -> float:
 
     topic_value = st.sidebar.text_input(
         "Тема классификации",
-        value=st.session_state.get("topic", ""),
+        value=st.session_state.get(
+            "topic",
+            load_config().get("domain", {}).get(
+                "topic", "sailing and yacht navigation")),
         key="sidebar_topic",
     )
     if topic_value != st.session_state.get("saved_topic", topic_value):
