@@ -33,7 +33,6 @@ from ui.report_generator import (
 
 st.set_page_config(
     page_title="Smart Data Pipeline",
-    page_icon="⛵",
     layout="wide",
 )
 
