@@ -140,7 +140,8 @@ def ensure_review_state(force_reload: bool = False) -> None:
             st.session_state["review_df"] = review_df
 
 
-def build_llm_client() -> GeminiLLMClient:
+@st.cache_resource
+def get_llm_client() -> GeminiLLMClient:
     """Create a GeminiLLMClient for dashboard interactions."""
     return GeminiLLMClient(config_path=str(CONFIG_PATH))
 
@@ -1256,10 +1257,15 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
         value=topic,
         key="topic_input",
     ).strip()
-    if user_topic != topic:
-        st.session_state["current_topic"] = user_topic
-    if user_topic:
+    if user_topic and user_topic != st.session_state.get(
+            "last_saved_topic", ""):
         st.session_state["topic"] = user_topic
+        st.session_state["current_topic"] = user_topic
+        st.session_state["last_saved_topic"] = user_topic
+        st.rerun()
+    elif user_topic:
+        st.session_state["topic"] = user_topic
+        st.session_state["last_saved_topic"] = user_topic
 
     if "selected_items" not in st.session_state:
         st.session_state["selected_items"] = {}
@@ -1645,7 +1651,7 @@ def build_sources_detail(sources_data: list[Any]) -> dict[str, Any]:
 def main() -> None:
     """Run the Streamlit HITL dashboard."""
     init_state()
-    llm_client = build_llm_client()
+    llm_client = get_llm_client()
     threshold = render_sidebar(llm_client)
 
     all_labels = [
