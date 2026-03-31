@@ -139,6 +139,36 @@ def ensure_review_state(force_reload: bool = False) -> None:
                 review_df["corrected_label"] = ""
             st.session_state["review_df"] = review_df
 
+@st.dialog("🎯 Настройка темы классификации")
+def topic_dialog():
+    st.markdown(
+        "Введите тему для классификации текстов. "
+        "Рекомендуем на **английском языке**."
+    )
+    st.caption(
+        "💡 Например: sailing, medical diagnosis, "
+        "legal documents, food recipes"
+    )
+    new_topic = st.text_input(
+        "Тема",
+        value=st.session_state.get(
+            "topic", "sailing and yacht navigation"),
+        key="dialog_topic_input"
+    )
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("✅ Применить", type="primary",
+                     use_container_width=True):
+            if new_topic.strip():
+                st.session_state["topic"] = new_topic.strip()
+                st.session_state["current_topic"] = new_topic.strip()
+                st.session_state["editing_topic"] = False
+                st.rerun()
+    with col2:
+        if st.button("Отмена", use_container_width=True):
+            st.session_state["editing_topic"] = False
+            st.rerun()
+
 
 @st.cache_resource
 def get_llm_client() -> GeminiLLMClient:
@@ -412,18 +442,17 @@ def render_sidebar(llm_client: GeminiLLMClient) -> float:
     cfg = load_config()
     st.sidebar.header("⚙️ Pipeline Settings")
 
-    topic_value = st.sidebar.text_input(
-        "Тема классификации",
-        value=st.session_state.get(
-            "topic",
-            load_config().get("domain", {}).get(
-                "topic", "sailing and yacht navigation")),
-        key="sidebar_topic",
-    )
-    if topic_value.strip():
-        if topic_value.strip() != st.session_state.get(
-                "last_saved_topic", ""):
-            st.session_state["topic"] = topic_value.strip()
+    current_topic = st.session_state.get(
+        "topic",
+        load_config().get("domain", {}).get(
+            "topic", "sailing and yacht navigation"))
+    st.sidebar.markdown(f"**{current_topic}**")
+    if st.sidebar.button(
+            "✏️ Изменить тему",
+            key="open_topic_dialog",
+            use_container_width=True):
+        st.session_state["editing_topic"] = True
+        st.rerun()
 
     if st.sidebar.button("🔄 Обновить классы через LLM", use_container_width=True):
         with st.spinner("Gemini уточняет тему и классы..."):
@@ -1254,28 +1283,20 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
         return
 
     st.subheader("Введите тему для классификации текстов")
-    topic = st.session_state.get("topic", load_config().get("domain", {}).get("topic", "sailing and yacht navigation"))
-    user_topic = st.text_input(
-        "Тема пользователя",
-        value=topic,
-        key="topic_input",
-    ).strip()
-    if user_topic and user_topic != st.session_state.get(
-            "last_saved_topic", ""):
-        st.session_state["topic"] = user_topic
-        st.session_state["current_topic"] = user_topic
-        st.session_state["last_saved_topic"] = user_topic
-        st.rerun()
-    elif user_topic:
-        st.session_state["topic"] = user_topic
-        st.session_state["last_saved_topic"] = user_topic
+    current_topic = st.session_state.get(
+        "topic", "sailing and yacht navigation")
+    st.info(
+        f"🎯 Текущая тема: **{current_topic}**  \n"
+        "Чтобы изменить — нажмите "
+        "**'✏️ Изменить тему'** в боковой панели слева."
+    )
 
     if "selected_items" not in st.session_state:
         st.session_state["selected_items"] = {}
 
     if st.button("🔍 Найти источники данных", key="find_sources_button"):
         with st.spinner("Gemini ищет источники..."):
-            suggestion_payload = find_sources_with_llm(user_topic, llm_client)
+            suggestion_payload = find_sources_with_llm(current_topic, llm_client)
         st.session_state["source_suggestions"] = suggestion_payload.get("sources", [])
         if suggestion_payload.get("suggested_classes"):
             st.session_state["current_classes"] = [
@@ -1654,6 +1675,8 @@ def build_sources_detail(sources_data: list[Any]) -> dict[str, Any]:
 def main() -> None:
     """Run the Streamlit HITL dashboard."""
     init_state()
+    if st.session_state.get("editing_topic", False):
+        topic_dialog()
     llm_client = get_llm_client()
     threshold = render_sidebar(llm_client)
 
