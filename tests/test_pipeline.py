@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import yaml
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
@@ -133,3 +134,33 @@ def test_pipeline_skip_flags(
     assert calls == {"collect": 1, "clean": 1, "annotate": 1, "train": 1}
     payload = json.loads((temp_project / "reports" / "context_memory.json").read_text(encoding="utf-8"))
     assert payload["step"] == "6.1"
+
+
+def test_pipeline_topic_override_updates_config(
+    temp_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Topic override should persist both the selected topic and the fresh artifact topic."""
+    sample_df = _sample_confident_df()
+    monkeypatch.setattr(run_pipeline_module, "CONFIG_PATH", temp_project / "config.yaml")
+    (temp_project / "config.yaml").write_text(
+        yaml.safe_dump({"domain": {"topic": "sailing and yacht navigation"}}, sort_keys=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(run_pipeline_module, "collect", lambda: sample_df)
+    monkeypatch.setattr(run_pipeline_module, "clean", lambda df: df)
+    monkeypatch.setattr(run_pipeline_module, "annotate", lambda df: df)
+    monkeypatch.setattr(run_pipeline_module, "human_review", lambda df, _: df)
+    monkeypatch.setattr(run_pipeline_module, "active_learn", lambda df: {"skipped": True})
+    monkeypatch.setattr(
+        run_pipeline_module,
+        "train",
+        lambda df: {"accuracy": 0.5, "f1_macro": 0.43},
+    )
+
+    result = data_pipeline.fn(skip_hitl=False, skip_al=True, topic="minecraft")
+
+    assert result["accuracy"] == 0.5
+    cfg = yaml.safe_load((temp_project / "config.yaml").read_text(encoding="utf-8"))
+    assert cfg["domain"]["topic"] == "minecraft"
+    assert cfg["domain"]["normalized_topic"] == "minecraft"

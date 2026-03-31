@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import yaml
 from dotenv import load_dotenv
 from loguru import logger
 
@@ -18,12 +19,49 @@ PROJECT_ROOT = pathlib.Path(__file__).parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+CONFIG_PATH = PROJECT_ROOT / "config.yaml"
+
 os.environ.setdefault("PREFECT_SERVER_ANALYTICS_ENABLED", "false")
 os.environ.setdefault("DO_NOT_TRACK", "1")
 
 from prefect import flow, task
 
 load_dotenv()
+
+
+def _load_config() -> dict[str, Any]:
+    """Load project config for topic synchronization in the pipeline."""
+    if not CONFIG_PATH.exists():
+        return {}
+    return yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+
+
+def _write_config(config: dict[str, Any]) -> None:
+    """Persist project config using UTF-8."""
+    CONFIG_PATH.write_text(
+        yaml.safe_dump(
+            config,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _persist_pipeline_topic(
+    *,
+    topic: str | None = None,
+    normalized_topic: str | None = None,
+) -> None:
+    """Persist current UI topic and last-generated data topic."""
+    config = _load_config()
+    domain_cfg = config.setdefault("domain", {})
+    if topic is not None:
+        domain_cfg["topic"] = topic
+    if normalized_topic is not None:
+        domain_cfg["normalized_topic"] = normalized_topic
+    _write_config(config)
 
 
 @task(name="collect_data")
@@ -120,8 +158,14 @@ def data_pipeline(
     from core.context_memory import ContextMemory
 
     logger.info("=== Smart Data Pipeline START ===")
-    if topic:
-        logger.info("Topic override: {}", topic)
+    config = _load_config()
+    effective_topic = str(
+        topic
+        or config.get("domain", {}).get("topic", "sailing and yacht navigation")
+    ).strip()
+    if effective_topic:
+        logger.info("Pipeline topic: {}", effective_topic)
+        _persist_pipeline_topic(topic=effective_topic)
 
     raw_df = collect()
     clean_df = clean(raw_df)
@@ -147,12 +191,13 @@ def data_pipeline(
     logger.info("=== Pipeline COMPLETE ===")
     logger.info("Accuracy: {:.3f}", metrics["accuracy"])
     logger.info("F1 macro: {:.3f}", metrics["f1_macro"])
+    _persist_pipeline_topic(normalized_topic=effective_topic)
 
     ContextMemory().update(
         step="6.1",
         status="done",
-        metrics=metrics,
-        notes="Full pipeline completed",
+        metrics={**metrics, "topic": effective_topic},
+        notes=f"Full pipeline completed for topic: {effective_topic}",
     )
     return metrics
 

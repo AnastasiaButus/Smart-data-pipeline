@@ -378,3 +378,39 @@ def test_kaggle_disabled_returns_empty(agent: DataCollectionAgent, monkeypatch: 
     assert isinstance(result, pd.DataFrame)
     assert result.empty
     assert list(result.columns) == REQUIRED_COLUMNS
+
+
+def test_generate_synthetic_respects_current_topic(agent: DataCollectionAgent) -> None:
+    """Synthetic fallback should reflect the configured non-sailing topic."""
+    agent._cfg["domain"]["topic"] = "minecraft"
+    result = agent._generate_synthetic(n=5)
+    assert isinstance(result, pd.DataFrame)
+    assert len(result) == 5
+    assert result["text"].str.contains("minecraft", case=False, regex=False).any()
+
+
+def test_run_skips_sailing_sources_for_non_sailing_topic(
+    agent: DataCollectionAgent,
+    tmp_path: Path,
+) -> None:
+    """Non-sailing topics should not call sailing-specific collectors."""
+    agent._cfg["domain"]["topic"] = "minecraft"
+    agent.config = agent._cfg
+    agent._raw_path = tmp_path / "raw"
+    agent._raw_path.mkdir()
+    agent._reports_path = tmp_path / "reports"
+    agent._reports_path.mkdir()
+    empty = pd.DataFrame(columns=REQUIRED_COLUMNS)
+
+    with (
+        patch.object(agent, "fetch_huggingface", return_value=empty),
+        patch.object(agent, "fetch_kaggle", return_value=empty),
+        patch.object(agent, "scrape_forum", side_effect=AssertionError("forum should be skipped")),
+        patch.object(agent, "fetch_rss", side_effect=AssertionError("rss should be skipped")),
+        patch.object(agent, "fetch_stackexchange", side_effect=AssertionError("stackexchange should be skipped")),
+    ):
+        result = agent.run()
+
+    assert isinstance(result, pd.DataFrame)
+    assert len(result) > 0
+    assert result["text"].str.contains("minecraft", case=False, regex=False).any()

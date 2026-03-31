@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -30,6 +31,7 @@ class DataCollectionAgent:
 
     _COLUMNS = ["id", "text", "label", "source", "collected_at"]
     _USER_AGENT = "smart-data-pipeline/0.1 (educational project)"
+    _SAILING_TOPIC = "sailing and yacht navigation"
 
     def __init__(self, config_path: str = "config.yaml") -> None:
         """Load configuration and initialise logger. No network connections opened here."""
@@ -292,7 +294,7 @@ class DataCollectionAgent:
     # ------------------------------------------------------------------ #
 
     def fetch_stackexchange(self) -> pd.DataFrame:
-        """Fetch sailing questions from StackExchange public API (site=outdoors, tag=sailing).
+        """Fetch tagged questions from StackExchange public API.
 
         Uses the official JSON API — no robots.txt scraping needed.
         Robots check is performed on the API domain as a best-practice signal.
@@ -305,6 +307,9 @@ class DataCollectionAgent:
 
         pages: int = se_cfg.get("pages", 5)
         api_root = "https://api.stackexchange.com"
+        site = str(se_cfg.get("site", "outdoors")).strip() or "outdoors"
+        tag = str(se_cfg.get("tag", "sailing")).strip() or "sailing"
+        tag_slug = re.sub(r"[^a-z0-9]+", "_", tag.lower()).strip("_") or "tagged"
 
         # robots.txt check on API domain — best practice
         if not self._is_crawl_allowed(api_root, self._USER_AGENT):
@@ -316,7 +321,7 @@ class DataCollectionAgent:
         for page_num in range(1, pages + 1):
             url = (
                 f"{api_root}/2.3/questions"
-                f"?site=outdoors&tagged=sailing&pagesize=100"
+                f"?site={site}&tagged={tag}&pagesize=100"
                 f"&page={page_num}&order=desc&sort=activity"
             )
             try:
@@ -339,7 +344,7 @@ class DataCollectionAgent:
                         records.append({
                             "text": text,
                             "label": "unlabeled",
-                            "source": "stackexchange_sailing",
+                            "source": f"stackexchange_{tag_slug}",
                             "collected_at": datetime.now(timezone.utc).isoformat(),
                         })
 
@@ -514,16 +519,27 @@ class DataCollectionAgent:
     def run(self) -> pd.DataFrame:
         """Collect data from all sources in parallel, merge, save, and return result."""
         logger.info("DataCollectionAgent.run() started")
+        topic = self._get_current_topic()
         source_fns = {
             "huggingface": self.fetch_huggingface,
             "kaggle": self.fetch_kaggle,
-            "forum": self.scrape_forum,
-            "rss": self.fetch_rss,
-            "stackexchange": self.fetch_stackexchange,
         }
+        if self._is_sailing_topic(topic):
+            source_fns.update(
+                {
+                    "forum": self.scrape_forum,
+                    "rss": self.fetch_rss,
+                    "stackexchange": self.fetch_stackexchange,
+                }
+            )
+        else:
+            logger.info(
+                "Topic '{}' is non-sailing — skipping sailing-specific RSS/forum/StackExchange sources",
+                topic or "unknown",
+            )
         results: dict[str, pd.DataFrame] = {}
 
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=max(len(source_fns), 1)) as executor:
             futures = {executor.submit(fn): name for name, fn in source_fns.items()}
             for future in as_completed(futures):
                 name = futures[future]
@@ -547,6 +563,7 @@ class DataCollectionAgent:
             "status": "done",
             "metrics": {
                 "total_rows": len(df),
+                "topic": topic,
                 "sources": {name: len(r) for name, r in results.items()},
                 "avg_text_len": round(df["text"].str.len().mean(), 1) if len(df) else 0,
                 "columns": list(df.columns),
@@ -578,62 +595,78 @@ class DataCollectionAgent:
     # ------------------------------------------------------------------ #
 
     def _generate_synthetic(self, n: int = 50) -> pd.DataFrame:
-        """Generate synthetic sailing-domain texts as fallback when all sources fail."""
+        """Generate topic-aware synthetic texts as fallback when all sources fail."""
         import random
 
-        templates = [
-            "The mainsail was reefed as the wind increased to 25 knots on the beam reach.",
-            "Anchoring in a crowded bay requires careful attention to scope and swing radius.",
-            "The GPS chartplotter showed we were two miles off the waypoint due to current.",
-            "Running lights must be displayed from sunset to sunrise when underway.",
-            "MOB drill: throw the life ring, press MOB button on GPS, keep the person in sight.",
-            "Tacking through the shipping lane requires constant VHF watch on channel 16.",
-            "The depth sounder alarm was set at 3 meters to warn of shoaling water.",
-            "We motorsailed into the harbour against a foul tide and 15 knot headwind.",
-            "The jib furling line jammed at the worst possible moment during the squall.",
-            "COLREGS rule 16: the give-way vessel shall take early and substantial action.",
-            "Checking the weather forecast before departure is non-negotiable seamanship.",
-            "The EPIRB was registered with the coast guard and mounted near the companionway.",
-            "Sail trim: ease the sheet until the telltales on the luff start to lift, then trim.",
-            "Night watch rotation: 3 hours on, 6 hours off keeps the crew adequately rested.",
-            "A DSC distress call on VHF channel 70 will alert nearby vessels automatically.",
-            "The standing rigging was inspected for broken strands and crevice corrosion.",
-            "Provisioning for a 10-day offshore passage requires careful meal planning.",
-            "The barometer had been falling steadily for 6 hours — a front was approaching.",
-            "Entering the marina on starboard tack, we gave way to the outbound vessel.",
-            "Celestial navigation backup: sun sight at noon for latitude determination.",
-            "The winch drum was loaded incorrectly, causing the sheet to override under load.",
-            "AIS transponder class B transmits position every 30 seconds when underway.",
-            "A proper watch schedule prevents fatigue on offshore passages lasting several days.",
-            "The bilge pump was tested and the float switch checked before leaving the dock.",
-            "Reading the tide tables correctly is essential for entering shallow harbours.",
-            "Safety briefing: life jacket locations, flare kit, emergency tiller, sea cocks.",
-            "The autopilot was disengaged for the narrow channel approach to the marina.",
-            "Boat hook technique: approach the dock at a shallow angle, not head-on.",
-            "The VHF radio check confirmed DSC MMSI was programmed correctly before departure.",
-            "Reefing early is always better than waiting for the conditions to force your hand.",
-            "Fog navigation: sound signals, radar watch, and reduced speed in restricted visibility.",
-            "The chart showed a submerged rock 200 metres off the headland at low water.",
-            "Jacklines were rigged fore and aft before leaving the harbour in the forecast gale.",
-            "Heaving-to in heavy weather: back the jib, ease the mainsheet, and adjust the helm.",
-            "The diesel engine raw water strainer was cleaned weekly in tropical anchorages.",
-            "Coast guard float plan filed before the offshore passage — a simple safety habit.",
-            "Keel design affects both stability and leeway made on upwind passages.",
-            "The spinnaker halyard was led aft before the sail was hoisted in gusty conditions.",
-            "Battery bank monitoring: house bank at 12.3V after overnight at anchor is low.",
-            "The dinghy davits were stowed and secured before departure in heavy swell.",
-            "Radar reflector mounted at the spreaders improves detection by ship traffic.",
-            "Waypoint routing through the archipelago avoided the charted shallow patches.",
-            "Sail inventory for ocean passages: main, genoa, working jib, storm jib, trysail.",
-            "The forestay tension was adjusted with the Loos gauge to manufacturer specification.",
-            "Passage planning includes checking Navtex for weather and navigation warnings.",
-            "The life raft was serviced at the authorised station before the Atlantic crossing.",
-            "Running backstays must be set up before gybing in heavy air to protect the mast.",
-            "A kedge anchor off the stern prevented the boat swinging onto the dock in the surge.",
-            "The chart plotter track showed we had made good 140 nautical miles in 24 hours.",
-            "Crew overboard recovery under sail: quick-stop manoeuvre or figure-of-eight method.",
-            "The marina berth was too short — we had to anchor in the outer roads for the night.",
-        ]
+        topic = self._get_current_topic()
+        if self._is_sailing_topic(topic):
+            templates = [
+                "The mainsail was reefed as the wind increased to 25 knots on the beam reach.",
+                "Anchoring in a crowded bay requires careful attention to scope and swing radius.",
+                "The GPS chartplotter showed we were two miles off the waypoint due to current.",
+                "Running lights must be displayed from sunset to sunrise when underway.",
+                "MOB drill: throw the life ring, press MOB button on GPS, keep the person in sight.",
+                "Tacking through the shipping lane requires constant VHF watch on channel 16.",
+                "The depth sounder alarm was set at 3 meters to warn of shoaling water.",
+                "We motorsailed into the harbour against a foul tide and 15 knot headwind.",
+                "The jib furling line jammed at the worst possible moment during the squall.",
+                "COLREGS rule 16: the give-way vessel shall take early and substantial action.",
+                "Checking the weather forecast before departure is non-negotiable seamanship.",
+                "The EPIRB was registered with the coast guard and mounted near the companionway.",
+                "Sail trim: ease the sheet until the telltales on the luff start to lift, then trim.",
+                "Night watch rotation: 3 hours on, 6 hours off keeps the crew adequately rested.",
+                "A DSC distress call on VHF channel 70 will alert nearby vessels automatically.",
+                "The standing rigging was inspected for broken strands and crevice corrosion.",
+                "Provisioning for a 10-day offshore passage requires careful meal planning.",
+                "The barometer had been falling steadily for 6 hours — a front was approaching.",
+                "Entering the marina on starboard tack, we gave way to the outbound vessel.",
+                "Celestial navigation backup: sun sight at noon for latitude determination.",
+                "The winch drum was loaded incorrectly, causing the sheet to override under load.",
+                "AIS transponder class B transmits position every 30 seconds when underway.",
+                "A proper watch schedule prevents fatigue on offshore passages lasting several days.",
+                "The bilge pump was tested and the float switch checked before leaving the dock.",
+                "Reading the tide tables correctly is essential for entering shallow harbours.",
+                "Safety briefing: life jacket locations, flare kit, emergency tiller, sea cocks.",
+                "The autopilot was disengaged for the narrow channel approach to the marina.",
+                "Boat hook technique: approach the dock at a shallow angle, not head-on.",
+                "The VHF radio check confirmed DSC MMSI was programmed correctly before departure.",
+                "Reefing early is always better than waiting for the conditions to force your hand.",
+                "Fog navigation: sound signals, radar watch, and reduced speed in restricted visibility.",
+                "The chart showed a submerged rock 200 metres off the headland at low water.",
+                "Jacklines were rigged fore and aft before leaving the harbour in the forecast gale.",
+                "Heaving-to in heavy weather: back the jib, ease the mainsheet, and adjust the helm.",
+                "The diesel engine raw water strainer was cleaned weekly in tropical anchorages.",
+                "Coast guard float plan filed before the offshore passage — a simple safety habit.",
+                "Keel design affects both stability and leeway made on upwind passages.",
+                "The spinnaker halyard was led aft before the sail was hoisted in gusty conditions.",
+                "Battery bank monitoring: house bank at 12.3V after overnight at anchor is low.",
+                "The dinghy davits were stowed and secured before departure in heavy swell.",
+                "Radar reflector mounted at the spreaders improves detection by ship traffic.",
+                "Waypoint routing through the archipelago avoided the charted shallow patches.",
+                "Sail inventory for ocean passages: main, genoa, working jib, storm jib, trysail.",
+                "The forestay tension was adjusted with the Loos gauge to manufacturer specification.",
+                "Passage planning includes checking Navtex for weather and navigation warnings.",
+                "The life raft was serviced at the authorised station before the Atlantic crossing.",
+                "Running backstays must be set up before gybing in heavy air to protect the mast.",
+                "A kedge anchor off the stern prevented the boat swinging onto the dock in the surge.",
+                "The chart plotter track showed we had made good 140 nautical miles in 24 hours.",
+                "Crew overboard recovery under sail: quick-stop manoeuvre or figure-of-eight method.",
+                "The marina berth was too short — we had to anchor in the outer roads for the night.",
+            ]
+        else:
+            safe_topic = topic or "general domain"
+            templates = [
+                f"This document introduces the core concepts and terminology used in {safe_topic}.",
+                f"A practitioner explains common workflows, edge cases, and troubleshooting steps in {safe_topic}.",
+                f"This article compares beginner and advanced approaches to learning {safe_topic}.",
+                f"An expert checklist summarises the most important safety, quality, and review steps in {safe_topic}.",
+                f"The guide outlines tools, best practices, and frequent mistakes related to {safe_topic}.",
+                f"A case study describes how teams evaluate data, labels, and model quality for {safe_topic}.",
+                f"This note highlights domain-specific jargon, examples, and recurring patterns in {safe_topic}.",
+                f"A long-form overview explains regulation, maintenance, and operational concerns in {safe_topic}.",
+                f"The tutorial walks through typical scenarios, exceptions, and decision points in {safe_topic}.",
+                f"An interview transcript captures practical experience, lessons learned, and recommendations for {safe_topic}.",
+            ]
         random.seed(42)
         texts = [templates[i % len(templates)] for i in range(n)]
         random.shuffle(texts)
@@ -654,6 +687,29 @@ class DataCollectionAgent:
     def _empty_df(self) -> pd.DataFrame:
         """Return an empty DataFrame with the required schema."""
         return pd.DataFrame(columns=self._COLUMNS)
+
+    def _get_current_topic(self) -> str:
+        """Return the topic currently configured for the pipeline."""
+        domain_cfg = self._cfg.get("domain", {})
+        return str(domain_cfg.get("topic", self._SAILING_TOPIC)).strip()
+
+    def _is_sailing_topic(self, topic: str) -> bool:
+        """Return True when the configured topic belongs to the sailing domain."""
+        topic_lower = str(topic or "").lower()
+        return any(
+            keyword in topic_lower
+            for keyword in [
+                "sail",
+                "yacht",
+                "boat",
+                "ship",
+                "marine",
+                "nautical",
+                "ocean",
+                "sea",
+                "naval",
+            ]
+        )
 
     def _is_text_column(self, series: pd.Series) -> bool:
         """Heuristically detect whether a column contains free-form text."""

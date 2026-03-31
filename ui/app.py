@@ -51,6 +51,24 @@ LICENSE_ROWS = [
     {"Источник": "Sailing Forums", "Строк": 20, "Тип лицензии": "robots.txt checked", "Статус скрапинга": "⚠️"},
 ]
 
+SAILING_TOPIC = "sailing and yacht navigation"
+SAILING_DEFAULT_CLASSES = [
+    "navigation",
+    "safety",
+    "equipment",
+    "weather",
+    "licensing",
+]
+REVIEW_COLUMNS = [
+    "id",
+    "text",
+    "label",
+    "confidence",
+    "source",
+    "suggested_label",
+    "corrected_label",
+]
+
 
 def load_config() -> dict[str, Any]:
     """Load config.yaml safely for UI state."""
@@ -93,6 +111,9 @@ def clear_topic_source_state() -> None:
     st.session_state["selected_sources"] = []
     st.session_state["selected_sources_draft"] = []
     st.session_state["selected_items"] = {}
+    st.session_state["review_df"] = empty_review_df()
+    st.session_state["messages"] = []
+    st.session_state["generated_report_content"] = ""
     st.session_state.pop("confirmed_sources", None)
 
 
@@ -164,6 +185,58 @@ def fallback_classes_for_topic(topic: str) -> list[str]:
     ]
 
 
+def empty_review_df() -> pd.DataFrame:
+    """Return an empty review queue dataframe with the expected schema."""
+    return pd.DataFrame(columns=REVIEW_COLUMNS)
+
+
+def normalize_topic_name(topic: str) -> str:
+    """Normalize a topic string for consistent comparisons."""
+    return re.sub(r"\s+", " ", str(topic or "").strip().lower())
+
+
+def get_artifact_topic(config: dict[str, Any] | None = None) -> str:
+    """Return the topic associated with the currently generated data artifacts."""
+    cfg = config or load_config()
+    domain_cfg = cfg.get("domain", {}) or {}
+    artifact_topic = str(domain_cfg.get("normalized_topic", "")).strip()
+    if artifact_topic:
+        return artifact_topic
+    return str(domain_cfg.get("topic", "")).strip()
+
+
+def get_topic_data_status(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Describe whether current parquet/review artifacts match the selected topic."""
+    cfg = config or load_config()
+    current_topic = str(
+        st.session_state.get(
+            "topic",
+            cfg.get("domain", {}).get("topic", SAILING_TOPIC),
+        )
+    ).strip()
+    artifact_topic = get_artifact_topic(cfg)
+    artifact_paths = [
+        RAW_DATASET_PATH,
+        CLEAN_DATASET_PATH,
+        ANNOTATED_DATASET_PATH,
+        REVIEW_QUEUE_PATH,
+    ]
+    artifacts_exist = any(path.exists() for path in artifact_paths)
+    current_normalized = normalize_topic_name(current_topic)
+    artifact_normalized = normalize_topic_name(artifact_topic)
+    is_fresh = (
+        not artifacts_exist
+        or not artifact_normalized
+        or current_normalized == artifact_normalized
+    )
+    return {
+        "current_topic": current_topic,
+        "artifact_topic": artifact_topic,
+        "artifacts_exist": artifacts_exist,
+        "is_fresh": is_fresh,
+    }
+
+
 def read_parquet_safe(path: Path) -> pd.DataFrame:
     """Read parquet safely and return an empty dataframe on failure."""
     if not path.exists():
@@ -199,18 +272,11 @@ def init_state() -> None:
         for item in domain.get("classes", [])
         if str(item).strip()
     ]
-    sailing_default_classes = [
-        "navigation",
-        "safety",
-        "equipment",
-        "weather",
-        "licensing",
-    ]
     topic_default_classes = fallback_classes_for_topic(topic) if topic else []
     if (
         topic
         and not is_sailing_topic(topic)
-        and classes == sailing_default_classes
+        and classes == SAILING_DEFAULT_CLASSES
         and topic_default_classes
     ):
         classes = topic_default_classes
@@ -243,20 +309,14 @@ def init_state() -> None:
 
 def ensure_review_state(force_reload: bool = False) -> None:
     """Load review queue into session state when available."""
+    status = get_topic_data_status()
+    if not status["is_fresh"]:
+        st.session_state["review_df"] = empty_review_df()
+        return
     if force_reload or "review_df" not in st.session_state:
         review_df = read_csv_safe(REVIEW_QUEUE_PATH)
         if review_df.empty:
-            st.session_state["review_df"] = pd.DataFrame(
-                columns=[
-                    "id",
-                    "text",
-                    "label",
-                    "confidence",
-                    "source",
-                    "suggested_label",
-                    "corrected_label",
-                ]
-            )
+            st.session_state["review_df"] = empty_review_df()
         else:
             if "corrected_label" not in review_df.columns:
                 review_df["corrected_label"] = ""
@@ -318,6 +378,8 @@ def get_llm_client() -> GeminiLLMClient:
 
 def get_best_dataset() -> pd.DataFrame:
     """Return the richest currently available dataset for UI analytics."""
+    if not get_topic_data_status()["is_fresh"]:
+        return pd.DataFrame()
     for path in [ANNOTATED_DATASET_PATH, CLEAN_DATASET_PATH, RAW_DATASET_PATH]:
         df = read_parquet_safe(path)
         if not df.empty:
@@ -327,6 +389,20 @@ def get_best_dataset() -> pd.DataFrame:
 
 def get_pipeline_stats() -> dict[str, Any]:
     """Compute compact pipeline stats for sidebar and analytics."""
+    status = get_topic_data_status()
+    if not status["is_fresh"]:
+        return {
+            "raw_rows": 0,
+            "clean_rows": 0,
+            "annotated_rows": 0,
+            "review_total": 0,
+            "reviewed": 0,
+            "progress_value": 0.0,
+            "annotated_df": pd.DataFrame(),
+            "data_stale": True,
+            "artifact_topic": status["artifact_topic"],
+        }
+
     raw_df = read_parquet_safe(RAW_DATASET_PATH)
     clean_df = read_parquet_safe(CLEAN_DATASET_PATH)
     annotated_df = read_parquet_safe(ANNOTATED_DATASET_PATH)
@@ -348,11 +424,15 @@ def get_pipeline_stats() -> dict[str, Any]:
         "reviewed": reviewed,
         "progress_value": progress_value,
         "annotated_df": annotated_df,
+        "data_stale": False,
+        "artifact_topic": status["artifact_topic"],
     }
 
 
 def compute_review_impact(threshold: float) -> tuple[int, float]:
     """Estimate queue size at the current confidence threshold."""
+    if not get_topic_data_status()["is_fresh"]:
+        return 0, 0.0
     annotated_df = read_parquet_safe(ANNOTATED_DATASET_PATH)
     if annotated_df.empty or "confidence" not in annotated_df.columns:
         return 0, 0.0
@@ -752,6 +832,12 @@ def render_sidebar(llm_client: GeminiLLMClient) -> float:
     st.sidebar.write(f"⏳ HITL проверка ({stats['reviewed']}/{stats['review_total']} проверено)")
     st.sidebar.write("⬜ Active Learning")
     st.sidebar.write("⬜ Обучение модели")
+    if stats.get("data_stale"):
+        st.sidebar.warning(
+            "Текущие данные относятся к теме "
+            f"'{stats.get('artifact_topic') or 'неизвестно'}'. "
+            "Для новой темы нужно заново прогнать pipeline."
+        )
 
     st.session_state["skip_active_learning"] = st.sidebar.checkbox(
         "Пропустить Active Learning",
@@ -773,6 +859,19 @@ def render_sidebar(llm_client: GeminiLLMClient) -> float:
 def render_hitl_tab(all_labels: list[str]) -> None:
     """Render manual review workflow for the review queue."""
     st.subheader("🔍 Проверка меток (HITL ★)")
+    status = get_topic_data_status()
+    if not status["is_fresh"]:
+        st.warning(
+            "Очередь HITL для текущей темы ещё не создана. "
+            f"На диске сейчас лежат артефакты для темы: "
+            f"**{status['artifact_topic'] or 'неизвестно'}**."
+        )
+        st.info(
+            "Сначала перезапустите pipeline/annotation для новой темы, "
+            "после этого review queue заполнится заново."
+        )
+        st.code("python pipeline/run_pipeline.py")
+        return
     ensure_review_state()
     review_df = st.session_state.get("review_df", pd.DataFrame()).copy()
 
@@ -928,6 +1027,15 @@ def render_hitl_tab(all_labels: list[str]) -> None:
 def render_analytics_tab(threshold: float) -> None:
     """Render annotation analytics and report builder."""
     st.subheader("📊 Аналитика")
+    status = get_topic_data_status()
+    if not status["is_fresh"]:
+        st.warning(
+            "Аналитические артефакты ещё относятся к теме "
+            f"**{status['artifact_topic'] or 'неизвестно'}**. "
+            "Для новой темы сначала нужен новый прогон pipeline."
+        )
+        st.code("python pipeline/run_pipeline.py")
+        return
     annotated_df = read_parquet_safe(ANNOTATED_DATASET_PATH)
 
     if annotated_df.empty:
@@ -1176,6 +1284,14 @@ def handle_chat_prompt(prompt: str, llm_client: GeminiLLMClient) -> None:
 def render_chat_tab(llm_client: GeminiLLMClient) -> None:
     """Render the dashboard chat tab."""
     st.subheader("💬 Обсудить данные с Gemini")
+    status = get_topic_data_status()
+    if not status["is_fresh"]:
+        st.warning(
+            "Чат временно отключён для новой темы, потому что данные и отчёты "
+            f"ещё относятся к теме **{status['artifact_topic'] or 'неизвестно'}**."
+        )
+        st.info("Сначала прогоните pipeline заново, затем чат будет отвечать уже по новым данным.")
+        return
     report_data = collect_report_data()
     topic = st.session_state.get("topic", report_data.get("topic", "не задана"))
     row_count = report_data.get("annotated_rows", 0) or report_data.get("total_rows", 0)
