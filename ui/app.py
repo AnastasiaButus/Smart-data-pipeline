@@ -1736,15 +1736,22 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
                         "kaggle.com и добавьте в config.yaml"
                     )
 
+                st.markdown("---")
+                cols = st.columns([0.4, 0.15, 0.15, 0.2, 0.1])
+                cols[0].markdown("**Название**")
+                cols[1].markdown("**Строк**")
+                cols[2].markdown("**Лицензия**")
+                cols[3].markdown("**Разрешение**")
+                cols[4].markdown("**Ссылка**")
+
                 for item in source_data["items"]:
                     item_key = f"{source_name}_{item['name']}"
                     if item_key not in st.session_state["selected_items"]:
-                        st.session_state["selected_items"][item_key] = bool(
-                            item.get("enabled", True)
-                        )
+                        st.session_state["selected_items"][item_key] = item.get("enabled", True)
 
-                    col1, col2, col3 = st.columns([3, 1, 1])
-                    with col1:
+                    c1, c2, c3, c4, c5 = st.columns([0.4, 0.15, 0.15, 0.2, 0.1])
+
+                    with c1:
                         checked = st.checkbox(
                             item["name"],
                             value=st.session_state["selected_items"][item_key],
@@ -1752,15 +1759,15 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
                         )
                         st.session_state["selected_items"][item_key] = checked
 
-                    with col2:
-                        st.caption(f"~{item['rows']} строк")
+                    c2.caption(f"~{item.get('rows', '?')}")
+                    c3.caption(item.get("license", "—"))
+                    c4.caption(source_data.get("risk", "—"))
 
-                    with col3:
-                        item_url = str(item.get("url", "")).strip()
-                        if item_url:
-                            st.link_button("🔗", item_url, help="Открыть датасет")
-                        else:
-                            st.caption("нет ссылки")
+                    item_url = str(item.get("url", "")).strip()
+                    if item_url:
+                        c5.link_button("🔗", item_url)
+                    else:
+                        c5.caption("—")
 
                     if checked:
                         total_selected += 1
@@ -1769,6 +1776,13 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
                         except Exception:
                             pass
                         selected_labels.append(f"{source_name} / {item['name']}")
+
+        st.divider()
+        st.caption(
+            "✅ Свободно — официальный API или открытая лицензия  |  "
+            "⚠️ С оговорками — robots.txt разрешает, лицензия неявная  |  "
+            "🚫 Ограничено — запрещено ToS или robots.txt"
+        )
 
         st.divider()
         metric_col1, metric_col2 = st.columns(2)
