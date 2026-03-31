@@ -142,7 +142,30 @@ def train(df: pd.DataFrame) -> dict[str, Any]:
     from core.model_wrapper import ModelWrapper
 
     wrapper = ModelWrapper()
-    return wrapper.fit(df)
+    try:
+        return wrapper.fit(df)
+    except ValueError as exc:
+        message = str(exc)
+        recoverable_markers = [
+            "No labeled rows available for model training",
+            "Need at least 2 classes with >=2 samples for training",
+        ]
+        if any(marker in message for marker in recoverable_markers):
+            logger.warning(
+                "Training skipped because the reviewed dataset is not ready yet: {}",
+                message,
+            )
+            return {
+                "skipped": True,
+                "reason": message,
+                "accuracy": 0.0,
+                "f1_macro": 0.0,
+                "f1_weighted": 0.0,
+                "f1_per_class": {},
+                "n_train": 0,
+                "n_test": 0,
+            }
+        raise
 
 
 @flow(
@@ -186,24 +209,36 @@ def data_pipeline(
         al_result = active_learn(reviewed_df)
         logger.info("AL summary: {}", al_result)
 
+    _persist_pipeline_topic(normalized_topic=effective_topic)
     metrics = train(reviewed_df)
 
     logger.info("=== Pipeline COMPLETE ===")
-    logger.info("Accuracy: {:.3f}", metrics["accuracy"])
-    logger.info("F1 macro: {:.3f}", metrics["f1_macro"])
-    _persist_pipeline_topic(normalized_topic=effective_topic)
+    if metrics.get("skipped"):
+        logger.warning("Training skipped: {}", metrics.get("reason", "unknown reason"))
+    else:
+        logger.info("Accuracy: {:.3f}", metrics["accuracy"])
+        logger.info("F1 macro: {:.3f}", metrics["f1_macro"])
 
     ContextMemory().update(
         step="6.1",
         status="done",
         metrics={**metrics, "topic": effective_topic},
-        notes=f"Full pipeline completed for topic: {effective_topic}",
+        notes=(
+            f"Pipeline data refresh completed for topic: {effective_topic}; "
+            f"training skipped: {metrics.get('reason')}"
+            if metrics.get("skipped")
+            else f"Full pipeline completed for topic: {effective_topic}"
+        ),
     )
     return metrics
 
 
 if __name__ == "__main__":
     results = data_pipeline()
-    logger.success("✅ Pipeline done!")
-    logger.success("Accuracy: {:.3f}", results["accuracy"])
-    logger.success("F1 macro: {:.3f}", results["f1_macro"])
+    if results.get("skipped"):
+        logger.warning("Pipeline data refresh completed, but training was skipped.")
+        logger.warning("Reason: {}", results.get("reason", "unknown reason"))
+    else:
+        logger.success("✅ Pipeline done!")
+        logger.success("Accuracy: {:.3f}", results["accuracy"])
+        logger.success("F1 macro: {:.3f}", results["f1_macro"])

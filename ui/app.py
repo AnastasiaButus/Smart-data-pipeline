@@ -156,6 +156,15 @@ def run_pipeline_for_current_topic() -> None:
                 ),
                 "details": combined_output,
             }
+        if "Training skipped:" in combined_output or "training was skipped" in combined_output:
+            notice = {
+                "kind": "warning",
+                "message": (
+                    f"Данные для темы **{topic}** обновлены, но финальное обучение пока пропущено. "
+                    "Сначала проверьте примеры во вкладке HITL, затем запустите переобучение."
+                ),
+                "details": combined_output,
+            }
         st.session_state["pipeline_refresh_notice"] = notice
         ensure_review_state(force_reload=True)
         st.rerun()

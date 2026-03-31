@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 
 import pipeline.run_pipeline as run_pipeline_module
 from pipeline.run_pipeline import annotate, clean, collect, data_pipeline, human_review, train
+import core.model_wrapper as model_wrapper_module
 
 
 @pytest.fixture
@@ -164,3 +165,20 @@ def test_pipeline_topic_override_updates_config(
     cfg = yaml.safe_load((temp_project / "config.yaml").read_text(encoding="utf-8"))
     assert cfg["domain"]["topic"] == "minecraft"
     assert cfg["domain"]["normalized_topic"] == "minecraft"
+
+
+def test_train_returns_skipped_metrics_for_insufficient_labels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Train task should return a warning payload when the reviewed dataset is not trainable yet."""
+
+    def _raise_not_ready(self, df):
+        raise ValueError("No labeled rows available for model training")
+
+    monkeypatch.setattr(model_wrapper_module.ModelWrapper, "fit", _raise_not_ready)
+
+    result = train.fn(_sample_confident_df())
+
+    assert result["skipped"] is True
+    assert "No labeled rows available" in result["reason"]
+    assert result["accuracy"] == 0.0
