@@ -35,17 +35,50 @@ This is not just a notebook or a single classifier. It is a coordinated system w
 
 ## Interface Preview
 
-### Topic-aware onboarding
+All screenshots below use the default demo topic:
+
+- `sailing and yacht navigation`
+
+### Topic change dialog
 ![Topic dialog](docs/screenshots/topic_dialog_modal.png)
+
+### Friendly sidebar with topic, classes, threshold, and progress
+![Sidebar UI](docs/screenshots/ui_sidebar.png)
 
 ### HITL review
 ![HITL UI](docs/screenshots/ui_hitl.png)
 
-### Analytics dashboard
-![Analytics UI](docs/screenshots/ui_analytics.png)
+### Chat with project-aware context
+![Chat UI](docs/screenshots/ui_chat.png)
+
+### Interactive EDA report example
+![EDA Quality](docs/screenshots/eda_quality.png)
 
 ### Active Learning comparison
 ![AL Strategy Comparison](docs/screenshots/al_strategy_comparison.png)
+
+## Default Demo Scenario: Sailing and Yacht Navigation
+
+The repository is especially comfortable to demo on the default yachting domain:
+
+- topic: `sailing and yacht navigation`
+- default classes:
+  - `navigation`
+  - `safety`
+  - `equipment`
+  - `weather`
+  - `licensing`
+- typical source mix:
+  - HuggingFace datasets
+  - StackExchange Sailing
+  - RSS feeds from sailing media
+  - forum data
+
+This is useful for demos, videos, and screenshots because:
+
+- the pipeline already has real topic-specific collectors for sailing
+- the screenshots look coherent and domain-specific
+- the user can still switch to another domain and rebuild the whole flow
 
 ## Why It Is Strong
 
@@ -55,6 +88,8 @@ This is not just a notebook or a single classifier. It is a coordinated system w
 - **Graceful degradation**: if Gemini quota is exhausted, the core pipeline still works with fallbacks.
 - **Notebook layer included**: Jupyter notebooks are available as a research companion, but the main workflow already works in the dashboard.
 - **Artifacts are materialized on disk**: raw, clean, annotated, queue, model, metrics, and reports are all persisted.
+- **User-friendly UI**: modal topic editing, gated onboarding, checkbox-based source selection, report builder, notebook commands, and explicit stale-data warnings reduce user confusion.
+- **API-token aware design**: Gemini is used for high-value intelligence tasks, while core collection/cleaning/annotation/retraining remain available without it.
 
 ## Architecture
 
@@ -242,6 +277,53 @@ TELEGRAM_BOT_TOKEN=optional_for_report_export
 
 If you replace the Gemini key while Streamlit is already running, **restart Streamlit** so the cached LLM client picks up the new key.
 
+## LLM Usage, Token Economy, and Resilience
+
+The project is designed to use Gemini **selectively**, not wastefully.
+
+### Where Gemini is used
+
+Gemini is used for high-value tasks such as:
+
+- class refresh in the sidebar
+- source suggestions during onboarding
+- EDA hypotheses and stopword support
+- chat answers in the dashboard
+- domain reformulation and compact report enrichments
+
+### Where Gemini is *not* required
+
+The following parts remain usable without Gemini:
+
+- most of the core data collection flow
+- data cleaning
+- exact and fuzzy deduplication
+- zero-shot annotation with `facebook/bart-large-mnli`
+- HITL queue review
+- retraining
+- final metrics
+
+### How the project saves API tokens
+
+- the Gemini client is cached in the dashboard with `@st.cache_resource`
+- common topic emoji are resolved locally first
+- topic-aware fallback classes are generated locally
+- source suggestions can fall back to heuristics
+- the pipeline is no longer auto-run immediately after topic change
+- the user confirms classes and sources first, so unnecessary LLM-heavy reruns are avoided
+
+### What happens if Gemini quota is exhausted
+
+If the UI or logs show `429 RESOURCE_EXHAUSTED`:
+
+- the application does not become useless
+- class refresh can degrade to topic-aware fallback classes
+- source suggestions can degrade to heuristic suggestions
+- chat can use fallback answers
+- the main pipeline still remains usable
+
+This is one of the important architectural strengths of the project: the LLM layer improves the experience, but does not own the whole system.
+
 ## Quick Start
 
 ### Run the full pipeline
@@ -331,6 +413,31 @@ The scraping layer follows several safety rules:
 - honest user-agent string
 - graceful failure on blocked or unavailable sources
 
+### Scraping implementation notes
+
+The current collectors combine:
+
+- official APIs where possible
+- RSS parsing via `feedparser`
+- HTML/forum scraping via `requests + BeautifulSoup4`
+- a generic scrape dispatcher for known URL families
+
+The generic dispatcher currently routes known sources such as:
+
+- `cruisersforum.com`
+- `sailingforums.com`
+- `stackexchange.com`
+
+### Hidden API / site-specific adapter note
+
+The project also has a prepared extension path for more advanced scraping strategies:
+
+- site-specific dispatch in `DataCollectionAgent.scrape()`
+- dedicated adapters for known domains
+- room to extend the scraper toward hidden/internal JSON endpoints when needed
+
+So the project already supports a practical scraping architecture, while the truly domain-specific "hidden API" layer is still an extension point rather than a universal finished collector.
+
 ### Kaggle note
 
 Kaggle is currently present in the UI and backend, but the default configured Kaggle datasets are **not text datasets**.  
@@ -373,6 +480,7 @@ The default threshold is configured in `config.yaml`:
 
 - zero-shot labeling with `facebook/bart-large-mnli`
 - confidence scoring
+- confidence-threshold routing
 - automatic split into:
   - confident labeled data
   - low-confidence review queue
@@ -388,6 +496,16 @@ The dashboard allows the user to:
 - correct the label manually
 - save manual corrections
 - retrain the model from corrected data
+
+### Confidence threshold
+
+The confidence threshold is exposed directly in the sidebar:
+
+- the user can move it without editing code
+- the UI estimates how many examples will go to review
+- the analytics tab shows the confidence distribution with the chosen threshold
+
+This makes the trade-off between automation and manual review transparent to the user.
 
 ### Agreement metric
 
@@ -463,8 +581,11 @@ The sidebar contains:
 - current topic
 - editable class list
 - confidence threshold
-- pipeline progress
+- scenario progress
 - skip toggles for HITL and Active Learning
+- topic-aware helper messages
+- LLM class refresh
+- manual class editing and reset to defaults
 
 ### Onboarding tab
 
@@ -477,6 +598,12 @@ The onboarding tab provides:
 - checkbox-based source selection
 - explicit source confirmation
 - pipeline refresh for the new topic only after onboarding is confirmed
+- stale-data protection so old artifacts are not silently shown as if they belong to the new topic
+- a clearer user path:
+  - confirm classes
+  - confirm sources
+  - run pipeline
+  - move to HITL
 
 ### HITL tab
 
@@ -497,6 +624,9 @@ The analytics tab provides:
 - EDA report download
 - notebook launch commands
 - report builder
+- interactive HTML EDA integration
+- quality heatmap
+- wordcloud and source-level overview
 
 ### Chat tab
 
@@ -505,6 +635,13 @@ The chat tab provides:
 - context-aware chat with Gemini
 - quick prompts
 - fallback answers if LLM is unavailable
+
+Overall, the dashboard is designed to feel product-like rather than script-like:
+
+- the user can work without touching Python code
+- the UI explains stale-data situations instead of silently mixing domains
+- important actions are grouped into steps
+- export and notebook actions are available directly from the interface
 
 ## Reports and Artifacts
 
@@ -543,6 +680,17 @@ The user can choose which sections to include, for example:
 - model metrics
 - retrospective
 
+This means the exported report is not fixed.  
+The user can tailor the output to a stakeholder, a teacher, a reviewer, or a teammate.
+
+### Why the report layer is strong
+
+- HTML report is interactive and portable
+- Markdown is convenient for repositories and documentation
+- Telegram export is useful for quick sharing
+- report sections are explicitly configurable in the UI
+- the same artifact set is reused across analytics, reports, and notebooks
+
 ## Jupyter Notebooks
 
 The project also includes two notebooks:
@@ -551,6 +699,24 @@ The project also includes two notebooks:
 - `notebooks/al_experiment.ipynb`
 
 They are an **additional research layer**, not the main product interface.
+
+### What each notebook is for
+
+- `eda.ipynb`
+  - deep-dive exploratory data analysis
+  - source distribution
+  - wordclouds
+  - quality views
+  - conclusions and recommendations
+- `al_experiment.ipynb`
+  - comparison of Active Learning strategies
+  - learning curves
+  - strategy trade-offs
+
+This gives the project two modes of use:
+
+- dashboard for a user-friendly end-to-end workflow
+- notebooks for exploratory and presentation-friendly analysis
 
 ### Recommended launch command
 
@@ -614,6 +780,19 @@ What happens then:
 - chat may switch to fallback
 - class refresh may degrade to topic-aware fallback classes
 - the **core pipeline still remains usable**
+
+### 3.1. If Gemini is temporarily unavailable but you still need to demo the project
+
+Use the default sailing topic or topic-aware fallbacks and focus on:
+
+- onboarding
+- confidence threshold
+- HITL
+- retraining
+- analytics
+- report export
+
+This still demonstrates the main product value.
 
 ### 4. If you create a new Gemini key in the same project
 
