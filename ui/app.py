@@ -1441,32 +1441,38 @@ def render_analytics_tab(threshold: float) -> None:
         st.markdown("**EDA ноутбук**")
         st.caption("Исходный анализ данных с графиками")
         st.code(
+            "New-Item -ItemType Directory -Force -Path .jupyter_runtime\\runtime | Out-Null\n"
             "$env:JUPYTER_CONFIG_DIR = \"$PWD\\.jupyter_runtime\"\n"
-            ".venv\\Scripts\\python.exe -m jupyter notebook notebooks/eda.ipynb",
+            "$env:JUPYTER_RUNTIME_DIR = \"$PWD\\.jupyter_runtime\\runtime\"\n"
+            "$env:JUPYTER_ALLOW_INSECURE_WRITES = \"true\"\n"
+            ".venv\\Scripts\\python.exe -m notebook notebooks/eda.ipynb",
             language="powershell",
         )
         st.caption(
-            "💡 Эта команда использует Python из проекта и обходит сломанный "
-            "глобальный Jupyter config из Anaconda."
+            "💡 Эта команда использует Python из проекта, локальные runtime-папки и "
+            "не сваливается в глобальный Anaconda Jupyter."
         )
 
     with notebook_col2:
         st.markdown("**AL эксперимент**")
         st.caption("Сравнение стратегий Active Learning")
         st.code(
+            "New-Item -ItemType Directory -Force -Path .jupyter_runtime\\runtime | Out-Null\n"
             "$env:JUPYTER_CONFIG_DIR = \"$PWD\\.jupyter_runtime\"\n"
-            ".venv\\Scripts\\python.exe -m jupyter notebook notebooks/al_experiment.ipynb",
+            "$env:JUPYTER_RUNTIME_DIR = \"$PWD\\.jupyter_runtime\\runtime\"\n"
+            "$env:JUPYTER_ALLOW_INSECURE_WRITES = \"true\"\n"
+            ".venv\\Scripts\\python.exe -m notebook notebooks/al_experiment.ipynb",
             language="powershell",
         )
         st.caption(
-            "💡 Для второго ноутбука используйте ту же схему: локальный config + "
-            "Jupyter из `.venv`, а не системный `jupyter.exe`."
+            "💡 Для второго ноутбука используйте ту же схему: локальный config, локальный "
+            "runtime и `notebook` из `.venv`, а не системный `jupyter.exe`."
         )
 
     st.info(
         "💡 Запускайте команды из папки проекта. "
-        "Они изолируют Jupyter от глобального пользовательского конфига и открывают ноутбук "
-        "в корректном окружении проекта."
+        "Они изолируют Jupyter от глобального пользовательского конфига, не используют "
+        "сломанный Anaconda path и открывают ноутбук в корректном окружении проекта."
     )
     st.caption(
         "🔁 Если вы сменили тему или заново прогнали pipeline, в ноутбуке нужно сделать "
