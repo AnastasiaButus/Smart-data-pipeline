@@ -32,6 +32,7 @@ from core.llm_client import GeminiLLMClient
 
 REPORTS_DIR = ROOT / "reports"
 DATASET_PATH = ROOT / "data" / "raw" / "dataset.parquet"
+CLEAN_DATASET_PATH = ROOT / "data" / "raw" / "dataset_clean.parquet"
 DOMAIN_SPEC_PATH = ROOT / "reports" / "domain_spec.json"
 WORDCLOUD_ALL_PATH = REPORTS_DIR / "wordcloud_all.png"
 WORDCLOUD_DOMAIN_PATH = REPORTS_DIR / "wordcloud_domain.png"
@@ -298,6 +299,66 @@ ENGLISH_STOPWORDS = {
     "yourself",
     "yourselves",
 }
+BOOTSTRAP_META_STOPWORDS = {
+    "guide",
+    "guides",
+    "overview",
+    "tutorial",
+    "training",
+    "note",
+    "notes",
+    "community",
+    "members",
+    "discuss",
+    "thread",
+    "threads",
+    "example",
+    "examples",
+    "practical",
+    "concrete",
+    "detailed",
+    "sections",
+    "recognised",
+    "recognize",
+    "reliable",
+    "uncertain",
+    "explicit",
+    "implicit",
+    "summarise",
+    "summary",
+    "analyst",
+    "reviews",
+    "highlights",
+    "broader",
+    "descriptions",
+    "partial",
+    "appears",
+    "late",
+    "article",
+    "articles",
+    "cross",
+    "functional",
+    "cross-functional",
+    "learning",
+    "resources",
+    "best",
+    "practice",
+    "practices",
+    "quality",
+    "review",
+    "checklists",
+    "begins",
+    "belongs",
+    "mentions",
+    "touches",
+    "present",
+    "context",
+    "compare",
+    "compares",
+    "approaches",
+    "workflow",
+    "workflows",
+}
 
 HTML_STYLE = """
 <style>
@@ -412,7 +473,9 @@ document.querySelectorAll('h2').forEach(h2 => {
 def load_inputs(project_root: Path | None = None) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Load the dataset and domain spec from the project workspace."""
     root = project_root or ROOT
-    dataset_path = root / "data" / "raw" / "dataset.parquet"
+    clean_dataset_path = root / "data" / "raw" / "dataset_clean.parquet"
+    raw_dataset_path = root / "data" / "raw" / "dataset.parquet"
+    dataset_path = clean_dataset_path if clean_dataset_path.exists() else raw_dataset_path
     domain_spec_path = root / "reports" / "domain_spec.json"
 
     df = pd.read_parquet(dataset_path)
@@ -422,7 +485,12 @@ def load_inputs(project_root: Path | None = None) -> tuple[pd.DataFrame, dict[st
     df["text"] = df["text"].fillna("").astype(str)
     df["source"] = df["source"].fillna("unknown").astype(str)
     df["text_len"] = df["text"].str.len()
-    logger.info("EDA inputs loaded: rows={}, sources={}", len(df), df["source"].nunique())
+    logger.info(
+        "EDA inputs loaded from {}: rows={}, sources={}",
+        dataset_path,
+        len(df),
+        df["source"].nunique(),
+    )
     return df, spec
 
 
@@ -447,11 +515,38 @@ def build_stopwords(
     """Build stopwords for corpus analysis and WordCloud generation."""
     root = project_root or ROOT
     current_topic = topic or load_topic(root)
+    config = yaml.safe_load((root / "config.yaml").read_text(encoding="utf-8")) or {}
     client = llm_client or GeminiLLMClient(config_path=str(root / "config.yaml"))
 
     base_stopwords = set(BASE_STOPWORDS)
     final_stopwords = client.generate_stopwords(current_topic, base_stopwords)
-    stopwords = set(ENGLISH_STOPWORDS) | set(WORDCLOUD_STOPWORDS) | final_stopwords
+    stopwords = (
+        set(ENGLISH_STOPWORDS)
+        | set(WORDCLOUD_STOPWORDS)
+        | set(BOOTSTRAP_META_STOPWORDS)
+        | final_stopwords
+    )
+    topic_tokens = {
+        token
+        for token in re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{2,}", str(current_topic).lower())
+        if len(token) >= 3
+    }
+    stopwords |= topic_tokens
+
+    current_classes = [
+        str(item).strip().lower()
+        for item in config.get("domain", {}).get("classes", [])
+        if str(item).strip()
+    ]
+    normalized_topic = "_".join(str(current_topic).strip().lower().split())
+    fallback_suffixes = {"basics", "tools", "workflows", "issues", "advanced"}
+    for class_name in current_classes:
+        if class_name.startswith(f"{normalized_topic}_"):
+            suffix = class_name.split("_", 1)[1]
+            if suffix in fallback_suffixes:
+                stopwords.add(suffix)
+                stopwords.update(suffix.split("_"))
+
     keyword_tokens = {
         token
         for keywords in domain_spec.get("keywords_by_class", {}).values()
@@ -616,7 +711,13 @@ def save_wordcloud_image(
 ) -> str:
     """Create and save a WordCloud image, returning a base64 HTML payload."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    corpus = " ".join(texts).strip() or "dataset analysis topic classification quality review"
+    token_counter: Counter[str] = Counter()
+    for text in texts:
+        token_counter.update(tokenize_text(str(text), stopwords))
+    if not token_counter:
+        token_counter.update(
+            ["dataset", "analysis", "classification", "review", "quality"]
+        )
     cloud = WordCloud(
         width=800,
         height=400,
@@ -624,7 +725,8 @@ def save_wordcloud_image(
         min_font_size=10,
         stopwords=stopwords,
         colormap=colormap,
-    ).generate(corpus)
+        collocations=False,
+    ).generate_from_frequencies(token_counter)
 
     plt.figure(figsize=(10, 5))
     plt.imshow(cloud, interpolation="bilinear")
@@ -945,6 +1047,16 @@ def build_insights(
     domain_pct = float(thematic_stats["thematic_pct"])
     dominant_sources = source_df.sort_values("count", ascending=False).head(3)
     dominant_source_names = ", ".join(dominant_sources["source"].astype(str).tolist()) or "нет данных"
+    bootstrap_rows = int(
+        source_df.loc[source_df["source"].str.startswith("topic_bootstrap_"), "count"].sum()
+    )
+    bootstrap_pct = round((bootstrap_rows / total) * 100, 1) if total else 0.0
+    bootstrap_note = (
+        " Сейчас датасет почти полностью состоит из synthetic bootstrap-текстов, поэтому "
+        "WordCloud показывает скорее шаблонные сигналы и учебные маркеры, чем лексику реальных внешних источников."
+        if bootstrap_pct >= 70.0
+        else ""
+    )
     top_source = str(dominant_sources.iloc[0]["source"]) if not dominant_sources.empty else "нет данных"
     top_source_share = (
         round(float(dominant_sources.iloc[0]["count"]) / total * 100, 1)
@@ -1002,11 +1114,12 @@ def build_insights(
         "wordcloud_all": (
             f"<strong>Наблюдение:</strong> В общем облаке чаще всего встречаются термины: "
             f"{escape(all_terms)}. Это помогает быстро проверить, что словарь соответствует теме "
-            f"<strong>{escape(topic)}</strong>."
+            f"<strong>{escape(topic)}</strong>.{bootstrap_note}"
         ),
         "wordcloud_domain": (
             f"<strong>Наблюдение:</strong> В тематическом облаке доминируют: {escape(domain_terms)}. "
             "Если здесь появляются слова из прошлой темы, отчёт нужно пересобрать на свежих артефактах."
+            f"{bootstrap_note}"
         ),
         "quality_heatmap": (
             f"<strong>Наблюдение:</strong> Самые заметные проблемы качества: {escape(issues_text)}. "
