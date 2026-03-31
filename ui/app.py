@@ -59,6 +59,41 @@ def load_config() -> dict[str, Any]:
         return {}
 
 
+def write_config(config: dict[str, Any]) -> None:
+    """Persist config.yaml preserving UTF-8 and key order."""
+    CONFIG_PATH.write_text(
+        yaml.safe_dump(
+            config,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def persist_domain_settings(
+    *, topic: str | None = None, classes: list[str] | None = None
+) -> None:
+    """Update domain settings in config.yaml."""
+    cfg = load_config()
+    domain_cfg = cfg.setdefault("domain", {})
+    if topic is not None:
+        domain_cfg["topic"] = topic
+    if classes is not None:
+        domain_cfg["classes"] = classes
+    write_config(cfg)
+
+
+def clear_topic_source_state() -> None:
+    """Reset onboarding source state when the topic changes."""
+    st.session_state["source_suggestions"] = []
+    st.session_state["selected_sources"] = []
+    st.session_state["selected_sources_draft"] = []
+    st.session_state["selected_items"] = {}
+    st.session_state.pop("confirmed_sources", None)
+
+
 def read_parquet_safe(path: Path) -> pd.DataFrame:
     """Read parquet safely and return an empty dataframe on failure."""
     if not path.exists():
@@ -96,6 +131,8 @@ def init_state() -> None:
     ]
 
     st.session_state.setdefault("topic", topic)
+    st.session_state.setdefault("current_topic", topic)
+    st.session_state.setdefault("last_saved_topic", topic)
     st.session_state.setdefault("editing_topic", not bool(topic))
     st.session_state.setdefault("current_classes", classes)
     st.session_state.setdefault(
@@ -160,8 +197,14 @@ def topic_dialog():
         if st.button("✅ Применить", type="primary",
                      use_container_width=True):
             if new_topic.strip():
-                st.session_state["topic"] = new_topic.strip()
-                st.session_state["current_topic"] = new_topic.strip()
+                normalized_topic = new_topic.strip()
+                previous_topic = str(st.session_state.get("topic", "")).strip()
+                if normalized_topic != previous_topic:
+                    clear_topic_source_state()
+                persist_domain_settings(topic=normalized_topic)
+                st.session_state["topic"] = normalized_topic
+                st.session_state["current_topic"] = normalized_topic
+                st.session_state["last_saved_topic"] = normalized_topic
                 st.session_state["editing_topic"] = False
                 st.rerun()
     with col2:
@@ -278,6 +321,7 @@ def get_topic_emoji(topic: str) -> str:
     topic_lower = str(topic or "").lower()
     emoji_map = [
         (["sail", "yacht", "boat", "ship", "marine", "nautical", "ocean", "sea", "naval"], "⛵"),
+        (["game", "gaming", "minecraft"], "🎮"),
         (["medical", "health", "doctor", "disease", "hospital", "pharma"], "🏥"),
         (["food", "cook", "recipe", "restaurant", "cuisine", "chef"], "🍳"),
         (["tech", "software", "code", "program", "computer", "ai", "ml"], "💻"),
@@ -468,18 +512,18 @@ def render_sidebar(llm_client: GeminiLLMClient) -> float:
         "current_classes",
         cfg.get("domain", {}).get("classes", []),
     )
+    desired_classes_text = "\n".join(current_classes_state)
     if (
         "classes_text" not in st.session_state
-        or st.session_state.get("classes_text_last_synced")
-        != "\n".join(current_classes_state)
+        or st.session_state.get("classes_text_synced_from_classes")
+        != desired_classes_text
     ):
-        st.session_state["classes_text"] = "\n".join(current_classes_state)
-        st.session_state["classes_text_last_synced"] = "\n".join(current_classes_state)
+        st.session_state["classes_text"] = desired_classes_text
+        st.session_state["classes_text_synced_from_classes"] = desired_classes_text
 
     st.sidebar.markdown("**Классы классификации:**")
     classes_input = st.sidebar.text_area(
         "Редактировать классы (каждый с новой строки):",
-        value=st.session_state["classes_text"],
         height=150,
         help=(
             "Можно отредактировать предложенные LLM классы "
@@ -502,21 +546,9 @@ def render_sidebar(llm_client: GeminiLLMClient) -> float:
                 if class_name.strip()
             ]
             if len(new_classes) >= 2:
-                cfg_data = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
-                domain_cfg = cfg_data.setdefault("domain", {})
-                domain_cfg["classes"] = new_classes
-                CONFIG_PATH.write_text(
-                    yaml.safe_dump(
-                        cfg_data,
-                        allow_unicode=True,
-                        default_flow_style=False,
-                        sort_keys=False,
-                    ),
-                    encoding="utf-8",
-                )
+                persist_domain_settings(classes=new_classes)
                 st.session_state["current_classes"] = new_classes
-                st.session_state["classes_text"] = "\n".join(new_classes)
-                st.session_state["classes_text_last_synced"] = "\n".join(new_classes)
+                st.session_state.pop("classes_text_synced_from_classes", None)
                 st.sidebar.success(f"✅ Сохранено {len(new_classes)} классов")
                 st.rerun()
             else:
@@ -531,8 +563,9 @@ def render_sidebar(llm_client: GeminiLLMClient) -> float:
                 "weather",
                 "licensing",
             ]
-            st.session_state["classes_text"] = "\n".join(default_classes)
-            st.session_state["classes_text_last_synced"] = "\n".join(default_classes)
+            persist_domain_settings(classes=default_classes)
+            st.session_state["current_classes"] = default_classes
+            st.session_state.pop("classes_text_synced_from_classes", None)
             st.rerun()
 
     current = [
@@ -1266,7 +1299,11 @@ def build_sources_detail(sources_data: list[Any]) -> dict[str, Any]:
 
 def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
     """Render onboarding flow for topic and source discovery."""
-    st.title("⛵ Smart Data Pipeline")
+    current_topic = st.session_state.get(
+        "topic",
+        load_config().get("domain", {}).get("topic", "sailing and yacht navigation"),
+    )
+    st.title(f"{get_topic_emoji(current_topic)} Smart Data Pipeline")
 
     if st.session_state.get("topic") and not st.session_state.get("editing_topic", False):
         st.subheader("Текущая конфигурация домена")
@@ -1280,11 +1317,8 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
                 "Выбраны источники: "
                 + ", ".join(st.session_state.get("selected_sources", []))
             )
-        return
 
     st.subheader("Введите тему для классификации текстов")
-    current_topic = st.session_state.get(
-        "topic", "sailing and yacht navigation")
     st.info(
         f"🎯 Текущая тема: **{current_topic}**  \n"
         "Чтобы изменить — нажмите "
@@ -1315,90 +1349,90 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
             "🚫 Ограничено — запрещено ToS или robots.txt"
         )
 
-        sources_detail = build_sources_detail(suggestions)
-        if len(sources_detail) > 5:
-            # TODO: пагинация при большом количестве дополнительных источников
-            pass
+    sources_detail = build_sources_detail(suggestions)
+    if len(sources_detail) > 5:
+        # TODO: пагинация при большом количестве дополнительных источников
+        pass
 
-        st.markdown("### 📦 Доступные источники данных")
-        st.caption("Раскройте каждый источник чтобы выбрать конкретные датасеты и сайты")
+    st.markdown("### 📦 Доступные источники данных")
+    st.caption("Раскройте каждый источник чтобы выбрать конкретные датасеты и сайты")
 
-        total_selected = 0
-        total_rows = 0
-        selected_labels: list[str] = []
+    total_selected = 0
+    total_rows = 0
+    selected_labels: list[str] = []
 
-        for source_name, source_data in sources_detail.items():
-            risk_icon = {
-                "✅ Свободно": "✅",
-                "⚠️ С оговорками": "⚠️",
-                "🚫 Ограничено": "🚫",
-            }.get(source_data["risk"], "⚪")
+    for source_name, source_data in sources_detail.items():
+        risk_icon = {
+            "✅ Свободно": "✅",
+            "⚠️ С оговорками": "⚠️",
+            "🚫 Ограничено": "🚫",
+        }.get(source_data["risk"], "⚪")
 
-            with st.expander(
-                f"{risk_icon} **{source_name}** — {source_data['license']}"
-            ):
-                st.caption(source_data["description"])
+        with st.expander(
+            f"{risk_icon} **{source_name}** — {source_data['license']}"
+        ):
+            st.caption(source_data["description"])
 
-                for item in source_data["items"]:
-                    item_key = f"{source_name}_{item['name']}"
-                    if item_key not in st.session_state["selected_items"]:
-                        st.session_state["selected_items"][item_key] = bool(
-                            item.get("enabled", True)
-                        )
+            for item in source_data["items"]:
+                item_key = f"{source_name}_{item['name']}"
+                if item_key not in st.session_state["selected_items"]:
+                    st.session_state["selected_items"][item_key] = bool(
+                        item.get("enabled", True)
+                    )
 
-                    col1, col2, col3 = st.columns([3, 1, 1])
-                    with col1:
-                        checked = st.checkbox(
-                            item["name"],
-                            value=st.session_state["selected_items"][item_key],
-                            key=f"cb_{item_key}",
-                        )
-                        st.session_state["selected_items"][item_key] = checked
-                    with col2:
-                        st.caption(f"~{item['rows']} строк")
-                    with col3:
-                        item_url = str(item.get("url", "")).strip()
-                        if item_url:
-                            st.link_button("🔗", item_url, help="Открыть источник")
-                        else:
-                            st.caption("—")
+                col1, col2, col3 = st.columns([3, 1, 1])
+                with col1:
+                    checked = st.checkbox(
+                        item["name"],
+                        value=st.session_state["selected_items"][item_key],
+                        key=f"cb_{item_key}",
+                        disabled=bool(item.get("disabled", False)),
+                        help=(
+                            "Датасет содержит числовые данные, не тексты. Недоступен для выбора."
+                            if item.get("disabled", False)
+                            else None
+                        ),
+                    )
+                    st.session_state["selected_items"][item_key] = (
+                        False if item.get("disabled", False) else checked
+                    )
+                with col2:
+                    st.caption(f"~{item['rows']} строк")
+                with col3:
+                    item_url = str(item.get("url", "")).strip()
+                    if item_url:
+                        st.link_button("🔗", item_url, help="Открыть источник")
+                    else:
+                        st.caption("—")
 
-                    if checked:
-                        total_selected += 1
-                        try:
-                            total_rows += int(item["rows"])
-                        except Exception:
-                            pass
-                        selected_labels.append(f"{source_name} / {item['name']}")
+                if st.session_state["selected_items"][item_key]:
+                    total_selected += 1
+                    try:
+                        total_rows += int(item["rows"])
+                    except Exception:
+                        pass
+                    selected_labels.append(f"{source_name} / {item['name']}")
 
-        st.divider()
-        metric_col1, metric_col2 = st.columns(2)
-        metric_col1.metric("Выбрано источников", total_selected)
-        metric_col2.metric("Ожидаемых строк", f"~{total_rows}")
+    st.divider()
+    metric_col1, metric_col2 = st.columns(2)
+    metric_col1.metric("Выбрано источников", total_selected)
+    metric_col2.metric("Ожидаемых строк", f"~{total_rows}")
 
-        if st.button("✅ Использовать выбранные источники", type="primary", key="confirm_source_selection"):
-            selected = {
-                key: value
-                for key, value in st.session_state["selected_items"].items()
-                if value
-            }
-            st.session_state["confirmed_sources"] = selected
-            st.session_state["selected_sources"] = selected_labels
-            st.session_state["editing_topic"] = False
-            cfg_data = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
-            sources_cfg = cfg_data.setdefault("sources", {})
-            sources_cfg["selected"] = selected_labels
-            CONFIG_PATH.write_text(
-                yaml.safe_dump(
-                    cfg_data,
-                    allow_unicode=True,
-                    default_flow_style=False,
-                    sort_keys=False,
-                ),
-                encoding="utf-8",
-            )
-            st.success(f"Сохранено {len(selected)} источников!")
-            st.rerun()
+    if st.button("✅ Использовать выбранные источники", type="primary", key="confirm_source_selection"):
+        selected = {
+            key: value
+            for key, value in st.session_state["selected_items"].items()
+            if value
+        }
+        st.session_state["confirmed_sources"] = selected
+        st.session_state["selected_sources"] = selected_labels
+        st.session_state["editing_topic"] = False
+        cfg_data = load_config()
+        sources_cfg = cfg_data.setdefault("sources", {})
+        sources_cfg["selected"] = selected_labels
+        write_config(cfg_data)
+        st.success(f"Сохранено {len(selected)} источников!")
+        st.rerun()
 
 
 def normalize_source_suggestions(sources_data: list[Any]) -> pd.DataFrame:
@@ -1563,9 +1597,8 @@ def build_sources_detail(sources_data: list[Any]) -> dict[str, Any]:
 
 
 def build_sources_detail(sources_data: list[Any]) -> dict[str, Any]:
-    """Final override: onboarding sources including Kaggle datasets."""
-    _ = sources_data
-    return {
+    """Build onboarding source groups and merge LLM suggestions into sections."""
+    details: dict[str, Any] = {
         "StackExchange / форумы": {
             "description": "Q&A форумы по теме",
             "license": "CC BY-SA 4.0",
@@ -1670,6 +1703,56 @@ def build_sources_detail(sources_data: list[Any]) -> dict[str, Any]:
             ],
         },
     }
+
+    for source in sources_data:
+        payload = source if isinstance(source, dict) else {}
+        item_name = (
+            payload.get("name")
+            or payload.get("source")
+            or payload.get("title")
+            or str(source)
+        )
+        item_type = str(payload.get("type") or payload.get("source_type") or "other").lower()
+        item_url = str(payload.get("url", "")).strip()
+        item_rows = payload.get("estimated_rows") or payload.get("rows") or 100
+        permission = PERMISSION_LABELS.get(
+            payload.get("risk_level") or payload.get("risk") or "medium",
+            "⚠️ С оговорками",
+        )
+        license_name = payload.get("license") or payload.get("license_type") or "—"
+
+        if "dataset" in item_type:
+            group_name = "LLM-рекомендации: datasets"
+            description = "Датасеты, предложенные Gemini для новой темы"
+        elif any(tag in item_type for tag in ["rss", "feed", "news", "media"]):
+            group_name = "LLM-рекомендации: RSS / медиа"
+            description = "Медиа-источники, предложенные Gemini для новой темы"
+        elif any(tag in item_type for tag in ["api", "forum", "q&a", "qa", "stack"]):
+            group_name = "LLM-рекомендации: API / форумы"
+            description = "API и форумы, предложенные Gemini для новой темы"
+        else:
+            group_name = "LLM-рекомендации: дополнительные источники"
+            description = "Дополнительные источники, предложенные Gemini"
+
+        group = details.setdefault(
+            group_name,
+            {
+                "description": description,
+                "license": license_name,
+                "risk": permission,
+                "items": [],
+            },
+        )
+        group["items"].append(
+            {
+                "name": str(item_name),
+                "url": item_url,
+                "rows": item_rows,
+                "enabled": permission != "🚫 Ограничено",
+            }
+        )
+
+    return details
 
 
 def main() -> None:
