@@ -44,6 +44,9 @@ ANNOTATED_DATASET_PATH = ROOT / "data" / "labeled" / "annotated.parquet"
 REVIEW_QUEUE_PATH = ROOT / "data" / "review_queue.csv"
 EDA_REPORT_PATH = ROOT / "reports" / "eda_report.html"
 EDA_METADATA_PATH = ROOT / "reports" / "eda_metadata.json"
+LEARNING_CURVE_PATH = ROOT / "reports" / "learning_curve.html"
+MODEL_ARTIFACT_PATH = ROOT / "models" / "classifier.pkl"
+MODEL_METRICS_PATH = ROOT / "reports" / "model_metrics.json"
 
 SAILING_TOPIC = "sailing and yacht navigation"
 SAILING_DEFAULT_CLASSES = [
@@ -108,6 +111,8 @@ def clear_topic_source_state() -> None:
     st.session_state["review_df"] = empty_review_df()
     st.session_state["messages"] = []
     st.session_state["generated_report_content"] = ""
+    st.session_state["retrain_metrics"] = None
+    st.session_state["retrain_topic"] = ""
     st.session_state.pop("confirmed_sources", None)
 
 
@@ -373,6 +378,16 @@ def get_latest_artifact_mtime(paths: list[Path]) -> float:
     return max(mtimes) if mtimes else 0.0
 
 
+def artifact_is_current(path: Path, reference_paths: list[Path]) -> bool:
+    """Return whether an artifact exists and is at least as new as the current data files."""
+    if not path.exists():
+        return False
+    reference_mtime = get_latest_artifact_mtime(reference_paths)
+    if reference_mtime <= 0:
+        return True
+    return path.stat().st_mtime >= reference_mtime
+
+
 def get_eda_report_status(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Describe whether the saved EDA HTML report matches the current topic and data."""
     topic_status = get_topic_data_status(config)
@@ -534,6 +549,8 @@ def init_state() -> None:
     st.session_state.setdefault("pipeline_refresh_notice", None)
     st.session_state.setdefault("last_pipeline_run_output", "")
     st.session_state.setdefault("last_pipeline_run_code", 0)
+    st.session_state.setdefault("retrain_metrics", None)
+    st.session_state.setdefault("retrain_topic", "")
     ensure_review_state()
 
 
@@ -649,7 +666,25 @@ def get_pipeline_stats() -> dict[str, Any]:
     )
     review_total = int(len(review_df))
     review_ratio = (reviewed / review_total) if review_total else 0.0
-    progress_value = round((3 + review_ratio) / 6, 2)
+    active_learning_done = artifact_is_current(
+        LEARNING_CURVE_PATH,
+        [ANNOTATED_DATASET_PATH, REVIEW_QUEUE_PATH],
+    )
+    retrain_metrics = st.session_state.get("retrain_metrics")
+    retrain_topic = str(st.session_state.get("retrain_topic", "")).strip()
+    model_training_done = (
+        bool(retrain_metrics) and retrain_topic == status["current_topic"]
+    ) or artifact_is_current(
+        MODEL_ARTIFACT_PATH,
+        [ANNOTATED_DATASET_PATH, REVIEW_QUEUE_PATH],
+    ) or artifact_is_current(
+        MODEL_METRICS_PATH,
+        [ANNOTATED_DATASET_PATH, REVIEW_QUEUE_PATH],
+    )
+    progress_value = round(
+        (3 + review_ratio + int(active_learning_done) + int(model_training_done)) / 6,
+        2,
+    )
     return {
         "raw_rows": int(len(raw_df)),
         "clean_rows": int(len(clean_df)),
@@ -657,6 +692,8 @@ def get_pipeline_stats() -> dict[str, Any]:
         "review_total": review_total,
         "reviewed": reviewed,
         "progress_value": progress_value,
+        "active_learning_done": active_learning_done,
+        "model_training_done": model_training_done,
         "annotated_df": annotated_df,
         "data_stale": False,
         "artifact_topic": status["artifact_topic"],
@@ -1063,9 +1100,14 @@ def render_sidebar(llm_client: GeminiLLMClient) -> float:
     st.sidebar.write(f"✅ Сбор данных ({stats['raw_rows']} строк)")
     st.sidebar.write(f"✅ Чистка данных ({stats['clean_rows']} строк)")
     st.sidebar.write(f"✅ Авторазметка ({stats['annotated_rows']} строк)")
-    st.sidebar.write(f"⏳ HITL проверка ({stats['reviewed']}/{stats['review_total']} проверено)")
-    st.sidebar.write("⬜ Active Learning")
-    st.sidebar.write("⬜ Обучение модели")
+    hitl_icon = "✅" if stats["review_total"] and stats["reviewed"] == stats["review_total"] else "⏳"
+    st.sidebar.write(f"{hitl_icon} HITL проверка ({stats['reviewed']}/{stats['review_total']} проверено)")
+    st.sidebar.write(
+        "✅ Active Learning" if stats.get("active_learning_done") else "⬜ Active Learning"
+    )
+    st.sidebar.write(
+        "✅ Обучение модели" if stats.get("model_training_done") else "⬜ Обучение модели"
+    )
     if stats.get("data_stale"):
         st.sidebar.warning(
             "Текущие данные относятся к теме "
@@ -1210,6 +1252,13 @@ def render_hitl_tab(all_labels: list[str]) -> None:
         review_df["corrected_label"].fillna("").astype(str).str.strip().ne("").sum()
     )
     st.info(f"Готово к обучению: {corrected_count} исправлений")
+    retrain_metrics = st.session_state.get("retrain_metrics")
+    retrain_topic = str(st.session_state.get("retrain_topic", "")).strip()
+    metrics_to_show = (
+        retrain_metrics
+        if isinstance(retrain_metrics, dict) and retrain_topic == str(st.session_state.get("topic", "")).strip()
+        else None
+    )
 
     if st.button("🔄 Запустить переобучение", key="retrain_from_hitl_button"):
         if not ANNOTATED_DATASET_PATH.exists():
@@ -1230,32 +1279,36 @@ def render_hitl_tab(all_labels: list[str]) -> None:
                 combined = pd.concat([base_df, corrected], ignore_index=True)
                 wrapper = ModelWrapper()
                 metrics = wrapper.fit(combined)
+            st.session_state["retrain_metrics"] = metrics
+            st.session_state["retrain_topic"] = str(st.session_state.get("topic", "")).strip()
+            st.rerun()
 
-            st.success("✅ Модель переобучена!")
+    if metrics_to_show:
+        st.success("✅ Модель переобучена!")
 
-            metric_col1, metric_col2, metric_col3 = st.columns(3)
-            metric_col1.metric(
-                "Accuracy",
-                f"{metrics['accuracy']:.3f}",
-                delta=f"{metrics['accuracy'] - 0.50:+.3f} vs baseline",
-            )
-            metric_col2.metric(
-                "F1 macro",
-                f"{metrics['f1_macro']:.3f}",
-                delta=f"{metrics['f1_macro'] - 0.43:+.3f} vs baseline",
-            )
-            metric_col3.metric("N train", int(metrics.get("n_train", 0)))
+        metric_col1, metric_col2, metric_col3 = st.columns(3)
+        metric_col1.metric(
+            "Accuracy",
+            f"{metrics_to_show['accuracy']:.3f}",
+            delta=f"{metrics_to_show['accuracy'] - 0.50:+.3f} vs baseline",
+        )
+        metric_col2.metric(
+            "F1 macro",
+            f"{metrics_to_show['f1_macro']:.3f}",
+            delta=f"{metrics_to_show['f1_macro'] - 0.43:+.3f} vs baseline",
+        )
+        metric_col3.metric("N train", int(metrics_to_show.get("n_train", 0)))
 
-            st.subheader("F1 по классам")
-            fig = px.bar(
-                x=list(metrics["f1_per_class"].keys()),
-                y=list(metrics["f1_per_class"].values()),
-                labels={"x": "Класс", "y": "F1"},
-                color=list(metrics["f1_per_class"].values()),
-                color_continuous_scale="Greens",
-            )
-            fig.update_layout(showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+        st.subheader("F1 по классам")
+        fig = px.bar(
+            x=list(metrics_to_show["f1_per_class"].keys()),
+            y=list(metrics_to_show["f1_per_class"].values()),
+            labels={"x": "Класс", "y": "F1"},
+            color=list(metrics_to_show["f1_per_class"].values()),
+            color_continuous_scale="Greens",
+        )
+        fig.update_layout(showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
 
 
 def render_analytics_tab(threshold: float) -> None:
@@ -1415,6 +1468,10 @@ def render_analytics_tab(threshold: float) -> None:
         "💡 Запускайте команды из папки проекта. "
         "Они изолируют Jupyter от глобального пользовательского конфига и открывают ноутбук "
         "в корректном окружении проекта."
+    )
+    st.caption(
+        "🔁 Если вы сменили тему или заново прогнали pipeline, в ноутбуке нужно сделать "
+        "**Restart kernel** и **Run All**, чтобы перечитать свежие parquet/CSV файлы."
     )
 
     st.subheader("📋 Сформировать отчёт")

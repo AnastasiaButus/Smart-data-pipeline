@@ -691,17 +691,49 @@ def build_quality_heatmap(quality_df: pd.DataFrame) -> go.Figure:
         "html_entities",
         "duplicates_pct",
     ]
+    if quality_df.empty:
+        fig = go.Figure()
+        fig.add_annotation(
+            text="Данных для quality heatmap пока нет",
+            x=0.5,
+            y=0.5,
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            font={"size": 16},
+        )
+        fig.update_layout(title="Data quality preview by source", height=460)
+        return fig
+
+    z_values = quality_df[columns].fillna(0.0).values
+    max_value = float(quality_df[columns].fillna(0.0).to_numpy().max()) if len(quality_df) else 0.0
+    text_values = [[f"{float(value):.1f}" for value in row] for row in z_values]
     fig = go.Figure(
         data=go.Heatmap(
-            z=quality_df[columns].values,
+            z=z_values,
             x=columns,
             y=quality_df["source"],
-            colorscale="RdYlGn_r",
+            text=text_values,
+            texttemplate="%{text}",
+            textfont={"size": 12},
+            zmin=0,
+            zmax=max(max_value, 1.0),
+            colorscale="Blues" if max_value <= 0 else "RdYlGn_r",
             colorbar={"title": "Severity %"},
             hovertemplate="Source: %{y}<br>Problem: %{x}<br>Severity: %{z:.2f}%<extra></extra>",
         )
     )
     fig.update_layout(title="Data quality preview by source", height=460)
+    if max_value <= 0:
+        fig.add_annotation(
+            text="На текущих данных явных проблем качества не обнаружено",
+            x=0.5,
+            y=1.08,
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            font={"size": 13},
+        )
     return fig
 
 
