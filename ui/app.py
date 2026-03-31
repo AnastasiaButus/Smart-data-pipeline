@@ -1765,6 +1765,240 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
             st.rerun()
 
 
+def build_sources_detail(sources_data: list[Any]) -> dict[str, Any]:
+    """Final override for onboarding source groups without duplicate HF section."""
+    _ = sources_data
+    return {
+        "StackExchange / С„РѕСЂСѓРјС‹": {
+            "description": "Q&A С„РѕСЂСѓРјС‹ РїРѕ С‚РµРјРµ",
+            "license": "CC BY-SA 4.0",
+            "risk": "вњ… РЎРІРѕР±РѕРґРЅРѕ",
+            "items": [
+                {
+                    "name": "sailing.stackexchange.com",
+                    "url": "https://sailing.stackexchange.com",
+                    "rows": 98,
+                    "enabled": True,
+                },
+                {
+                    "name": "outdoors.stackexchange.com",
+                    "url": "https://outdoors.stackexchange.com",
+                    "rows": 50,
+                    "enabled": False,
+                },
+            ],
+        },
+        "HuggingFace datasets": {
+            "description": "РћС‚РєСЂС‹С‚С‹Рµ ML РґР°С‚Р°СЃРµС‚С‹",
+            "license": "Р·Р°РІРёСЃРёС‚ РѕС‚ РґР°С‚Р°СЃРµС‚Р°",
+            "risk": "вњ… РЎРІРѕР±РѕРґРЅРѕ",
+            "items": [
+                {
+                    "name": "dair-ai/emotion",
+                    "url": "https://huggingface.co/datasets/dair-ai/emotion",
+                    "rows": 300,
+                    "enabled": True,
+                },
+                {
+                    "name": "mteb/tweet_sentiment_extraction",
+                    "url": "https://huggingface.co/datasets/mteb/tweet_sentiment_extraction",
+                    "rows": 300,
+                    "enabled": True,
+                },
+            ],
+        },
+        "RSS РѕС‚СЂР°СЃР»РµРІС‹С… РјРµРґРёР°": {
+            "description": "РќРѕРІРѕСЃС‚Рё СЏС…С‚РёРЅРіР° Рё РїР°СЂСѓСЃРЅРѕРіРѕ СЃРїРѕСЂС‚Р°",
+            "license": "editorial use",
+            "risk": "вљ пёЏ РЎ РѕРіРѕРІРѕСЂРєР°РјРё",
+            "items": [
+                {
+                    "name": "Yachting World",
+                    "url": "https://www.yachtingworld.com/feed",
+                    "rows": 30,
+                    "enabled": True,
+                },
+                {
+                    "name": "Cruising World",
+                    "url": "https://www.cruisingworld.com/feed/",
+                    "rows": 10,
+                    "enabled": True,
+                },
+                {
+                    "name": "Sail Magazine",
+                    "url": "https://www.sailmagazine.com/feed",
+                    "rows": 10,
+                    "enabled": True,
+                },
+                {
+                    "name": "48В° North",
+                    "url": "https://www.48north.com/feed/",
+                    "rows": 10,
+                    "enabled": True,
+                },
+            ],
+        },
+        "Р¤РѕСЂСѓРјС‹": {
+            "description": "РўРµРјР°С‚РёС‡РµСЃРєРёРµ С„РѕСЂСѓРјС‹ СЏС…С‚СЃРјРµРЅРѕРІ",
+            "license": "robots.txt checked",
+            "risk": "вљ пёЏ РЎ РѕРіРѕРІРѕСЂРєР°РјРё",
+            "items": [
+                {
+                    "name": "Sailing Forums",
+                    "url": "https://www.sailingforums.com",
+                    "rows": 20,
+                    "enabled": True,
+                }
+            ],
+        },
+    }
+
+
+def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
+    """Final override for onboarding with non-duplicated sources and HF warning."""
+    st.title("в›µ Smart Data Pipeline")
+
+    if st.session_state.get("topic") and not st.session_state.get("editing_topic", False):
+        st.subheader("РўРµРєСѓС‰Р°СЏ РєРѕРЅС„РёРіСѓСЂР°С†РёСЏ РґРѕРјРµРЅР°")
+        st.write(f"**РўРµРјР°:** {st.session_state.get('topic')}")
+        st.write("**РљР»Р°СЃСЃС‹:** " + ", ".join(st.session_state.get("current_classes", [])))
+        if st.button("РР·РјРµРЅРёС‚СЊ С‚РµРјСѓ", key="change_topic_button"):
+            st.session_state["editing_topic"] = True
+            st.rerun()
+        if st.session_state.get("selected_sources"):
+            st.success(
+                "Р’С‹Р±СЂР°РЅС‹ РёСЃС‚РѕС‡РЅРёРєРё: "
+                + ", ".join(st.session_state.get("selected_sources", []))
+            )
+        return
+
+    st.subheader("Р’РІРµРґРёС‚Рµ С‚РµРјСѓ РґР»СЏ РєР»Р°СЃСЃРёС„РёРєР°С†РёРё С‚РµРєСЃС‚РѕРІ")
+    topic = st.text_input(
+        "РўРµРјР° РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ",
+        value=st.session_state.get("topic", ""),
+        key="onboarding_topic_input",
+    ).strip()
+    if topic:
+        st.session_state["topic"] = topic
+
+    if "selected_items" not in st.session_state:
+        st.session_state["selected_items"] = {}
+
+    if st.button("рџ”Ќ РќР°Р№С‚Рё РёСЃС‚РѕС‡РЅРёРєРё РґР°РЅРЅС‹С…", key="find_sources_button"):
+        with st.spinner("Gemini РёС‰РµС‚ РёСЃС‚РѕС‡РЅРёРєРё..."):
+            suggestion_payload = find_sources_with_llm(topic, llm_client)
+        st.session_state["source_suggestions"] = suggestion_payload.get("sources", [])
+        if suggestion_payload.get("suggested_classes"):
+            st.session_state["current_classes"] = [
+                str(item).strip()
+                for item in suggestion_payload.get("suggested_classes", [])
+                if str(item).strip()
+            ]
+
+    suggestions = st.session_state.get("source_suggestions", [])
+    if suggestions:
+        df_sources = normalize_source_suggestions(suggestions).drop(
+            columns=["URL"],
+            errors="ignore",
+        )
+        st.dataframe(df_sources, use_container_width=True, hide_index=True)
+        st.caption(
+            "вњ… РЎРІРѕР±РѕРґРЅРѕ вЂ” РѕС„РёС†РёР°Р»СЊРЅС‹Р№ API РёР»Рё РѕС‚РєСЂС‹С‚Р°СЏ Р»РёС†РµРЅР·РёСЏ  |  "
+            "вљ пёЏ РЎ РѕРіРѕРІРѕСЂРєР°РјРё вЂ” robots.txt СЂР°Р·СЂРµС€Р°РµС‚, Р»РёС†РµРЅР·РёСЏ РЅРµСЏРІРЅР°СЏ  |  "
+            "рџљ« РћРіСЂР°РЅРёС‡РµРЅРѕ вЂ” Р·Р°РїСЂРµС‰РµРЅРѕ ToS РёР»Рё robots.txt"
+        )
+
+        sources_detail = build_sources_detail(suggestions)
+        st.markdown("### 📦 Доступные источники данных")
+        st.caption("Раскройте каждый источник чтобы выбрать конкретные датасеты и сайты")
+
+        total_selected = 0
+        total_rows = 0
+        selected_labels: list[str] = []
+
+        for source_name, source_data in sources_detail.items():
+            risk_icon = {
+                "вњ… РЎРІРѕР±РѕРґРЅРѕ": "вњ…",
+                "вљ пёЏ РЎ РѕРіРѕРІРѕСЂРєР°РјРё": "вљ пёЏ",
+                "рџљ« РћРіСЂР°РЅРёС‡РµРЅРѕ": "рџљ«",
+            }.get(source_data["risk"], "вљЄ")
+
+            with st.expander(f"{risk_icon} **{source_name}** вЂ” {source_data['license']}"):
+                st.caption(source_data["description"])
+                if source_name == "HuggingFace datasets":
+                    st.warning(
+                        "⚠️ Эти датасеты общетематические "
+                        "(эмоции, твиты) — не специфичны для яхтинга. "
+                        "Они дают объём, но 76% текстов будут "
+                        "нетематическими. Для лучшего качества "
+                        "ищите тематические датасеты на "
+                        "huggingface.co/datasets"
+                    )
+
+                for item in source_data["items"]:
+                    item_key = f"{source_name}_{item['name']}"
+                    if item_key not in st.session_state["selected_items"]:
+                        st.session_state["selected_items"][item_key] = bool(
+                            item.get("enabled", True)
+                        )
+
+                    col1, col2, col3 = st.columns([3, 1, 1])
+                    with col1:
+                        checked = st.checkbox(
+                            item["name"],
+                            value=st.session_state["selected_items"][item_key],
+                            key=f"cb_{item_key}",
+                        )
+                        st.session_state["selected_items"][item_key] = checked
+
+                    with col2:
+                        st.caption(f"~{item['rows']} СЃС‚СЂРѕРє")
+
+                    with col3:
+                        item_url = str(item.get("url", "")).strip()
+                        if item_url:
+                            st.link_button("рџ”—", item_url, help="РћС‚РєСЂС‹С‚СЊ РґР°С‚Р°СЃРµС‚")
+                        else:
+                            st.caption("РЅРµС‚ СЃСЃС‹Р»РєРё")
+
+                    if checked:
+                        total_selected += 1
+                        try:
+                            total_rows += int(item["rows"])
+                        except Exception:
+                            pass
+                        selected_labels.append(f"{source_name} / {item['name']}")
+
+        st.divider()
+        metric_col1, metric_col2 = st.columns(2)
+        metric_col1.metric("Р’С‹Р±СЂР°РЅРѕ РёСЃС‚РѕС‡РЅРёРєРѕРІ", total_selected)
+        metric_col2.metric("РћР¶РёРґР°РµРјС‹С… СЃС‚СЂРѕРє", f"~{total_rows}")
+
+        if st.button("вњ… РСЃРїРѕР»СЊР·РѕРІР°С‚СЊ РІС‹Р±СЂР°РЅРЅС‹Рµ РёСЃС‚РѕС‡РЅРёРєРё", type="primary", key="confirm_source_selection"):
+            selected = {
+                key: value
+                for key, value in st.session_state["selected_items"].items()
+                if value
+            }
+            st.session_state["confirmed_sources"] = selected
+            st.session_state["selected_sources"] = selected_labels
+            st.session_state["editing_topic"] = False
+            cfg_data = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+            sources_cfg = cfg_data.setdefault("sources", {})
+            sources_cfg["selected"] = selected_labels
+            CONFIG_PATH.write_text(
+                yaml.safe_dump(
+                    cfg_data,
+                    allow_unicode=True,
+                    default_flow_style=False,
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+            st.success(f"РЎРѕС…СЂР°РЅРµРЅРѕ {len(selected)} РёСЃС‚РѕС‡РЅРёРєРѕРІ!")
+            st.rerun()
+
+
 def main() -> None:
     """Run the Streamlit HITL dashboard."""
     init_state()
