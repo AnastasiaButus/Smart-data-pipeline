@@ -520,19 +520,25 @@ class DataCollectionAgent:
         """Collect data from all sources in parallel, merge, save, and return result."""
         logger.info("DataCollectionAgent.run() started")
         topic = self._get_current_topic()
-        source_fns = {
-            "huggingface": self.fetch_huggingface,
-            "kaggle": self.fetch_kaggle,
-        }
+        source_fns = {"kaggle": self.fetch_kaggle}
         if self._is_sailing_topic(topic):
             source_fns.update(
                 {
+                    "huggingface": self.fetch_huggingface,
                     "forum": self.scrape_forum,
                     "rss": self.fetch_rss,
                     "stackexchange": self.fetch_stackexchange,
                 }
             )
         else:
+            source_fns["topic_bootstrap"] = self.fetch_topic_bootstrap
+            if self._has_topic_specific_huggingface(topic):
+                source_fns["huggingface"] = self.fetch_huggingface
+            else:
+                logger.info(
+                    "Topic '{}' has no topic-specific HuggingFace datasets in config — using topic bootstrap instead",
+                    topic or "unknown",
+                )
             logger.info(
                 "Topic '{}' is non-sailing — skipping sailing-specific RSS/forum/StackExchange sources",
                 topic or "unknown",
@@ -688,6 +694,126 @@ class DataCollectionAgent:
         """Return an empty DataFrame with the required schema."""
         return pd.DataFrame(columns=self._COLUMNS)
 
+    def fetch_topic_bootstrap(self) -> pd.DataFrame:
+        """Generate a topic-aware bootstrap corpus for non-sailing domains."""
+        topic = self._get_current_topic()
+        if not topic:
+            logger.warning("No topic configured for topic bootstrap")
+            return self._empty_df()
+        if self._is_sailing_topic(topic):
+            logger.info("Topic bootstrap skipped for sailing topic")
+            return self._empty_df()
+
+        classes = [
+            str(item).strip()
+            for item in self._cfg.get("domain", {}).get("classes", [])
+            if str(item).strip()
+        ]
+        if not classes:
+            classes = self._fallback_topic_classes(topic)
+
+        guide_templates = [
+            "This {topic} guide focuses on {class_name}, with detailed sections about {signal_a}, {signal_b}, and {signal_c} that appear in practical work.",
+            "An expert overview of {topic} explains how {class_name} is recognised through {signal_a}, {signal_b}, and {signal_c}, not just generic topic language.",
+            "A long-form tutorial on {topic} breaks down {class_name}, compares approaches around {signal_a}, and uses {signal_b} plus {signal_c} as concrete examples.",
+            "This training note for {topic} describes {class_name} through hands-on workflows for {signal_a}, troubleshooting around {signal_b}, and review checklists for {signal_c}.",
+        ]
+        forum_templates = [
+            "Community members discuss {topic} and debate whether this example belongs to {class_name} because it mentions {signal_a}, touches {signal_b}, and partly overlaps with {signal_c}.",
+            "A forum thread about {topic} asks how to recognise {class_name}, which clues in {signal_a}, {signal_b}, or {signal_c} are most reliable, and when the label becomes uncertain.",
+            "Practitioners compare tools and tactics in {topic}, arguing that {class_name} is easiest to spot when {signal_a} is explicit, while {signal_b} and {signal_c} stay implicit.",
+        ]
+        note_templates = [
+            "These notes summarise {topic} cases where {class_name} is present via {signal_a} and {signal_b}, but the surrounding context also references {signal_c}, making review less obvious.",
+            "An analyst reviews {topic} examples and highlights that {class_name} can be confused with broader descriptions when {signal_a} is vague, {signal_b} is partial, or {signal_c} appears late.",
+        ]
+        general_templates = [
+            "A broad {topic} overview describes trends, best practices, learning resources, and operational trade-offs without clearly belonging to a single class.",
+            "This {topic} article compares several subareas, mixes terminology from multiple labels, and would likely require careful human review before training.",
+            "A practitioner reflects on how people learn {topic}, choose tools, and judge quality, but the discussion stays intentionally cross-functional.",
+        ]
+
+        records: list[dict[str, str]] = []
+        topic_phrase = topic.replace("_", " ")
+        for class_name in classes:
+            class_phrase = class_name.replace("_", " ")
+            signal_a, signal_b, signal_c = self._class_bootstrap_signals(
+                topic_phrase,
+                class_phrase,
+            )
+            for template in guide_templates:
+                records.append(
+                    {
+                        "text": template.format(
+                            topic=topic_phrase,
+                            class_name=class_phrase,
+                            signal_a=signal_a,
+                            signal_b=signal_b,
+                            signal_c=signal_c,
+                        ),
+                        "label": "unlabeled",
+                        "source": "topic_bootstrap_guides",
+                        "collected_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+            for template in forum_templates:
+                records.append(
+                    {
+                        "text": template.format(
+                            topic=topic_phrase,
+                            class_name=class_phrase,
+                            signal_a=signal_a,
+                            signal_b=signal_b,
+                            signal_c=signal_c,
+                        ),
+                        "label": "unlabeled",
+                        "source": "topic_bootstrap_forum",
+                        "collected_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+            for template in note_templates:
+                records.append(
+                    {
+                        "text": template.format(
+                            topic=topic_phrase,
+                            class_name=class_phrase,
+                            signal_a=signal_a,
+                            signal_b=signal_b,
+                            signal_c=signal_c,
+                        ),
+                        "label": "unlabeled",
+                        "source": "topic_bootstrap_notes",
+                        "collected_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+
+        for template in general_templates:
+            records.append(
+                {
+                    "text": template.format(topic=topic_phrase),
+                    "label": "unlabeled",
+                    "source": "topic_bootstrap_general",
+                    "collected_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+
+        if not records:
+            logger.warning("Topic bootstrap produced 0 rows for {}", topic)
+            return self._empty_df()
+
+        df = pd.DataFrame(records)
+        df.insert(0, "id", [str(uuid.uuid4()) for _ in range(len(df))])
+        for column in self._COLUMNS:
+            if column not in df.columns:
+                df[column] = None
+        logger.info(
+            "Topic bootstrap generated {} rows for topic '{}' with classes={}",
+            len(df),
+            topic,
+            classes,
+        )
+        return df[self._COLUMNS]
+
     def _get_current_topic(self) -> str:
         """Return the topic currently configured for the pipeline."""
         domain_cfg = self._cfg.get("domain", {})
@@ -709,6 +835,74 @@ class DataCollectionAgent:
                 "sea",
                 "naval",
             ]
+        )
+
+    def _topic_tokens(self, topic: str) -> list[str]:
+        """Extract normalized tokens from a topic string."""
+        tokens = [
+            re.sub(r"[^a-z0-9]+", "", token.lower())
+            for token in str(topic or "").split()
+        ]
+        return [token for token in tokens if len(token) >= 4]
+
+    def _has_topic_specific_huggingface(self, topic: str) -> bool:
+        """Check whether configured HuggingFace datasets look topic-specific."""
+        if self._is_sailing_topic(topic):
+            return True
+        tokens = self._topic_tokens(topic)
+        if not tokens:
+            return False
+        for ds_spec in self._cfg.get("sources", {}).get("huggingface", {}).get("datasets", []):
+            dataset_name = str(ds_spec.get("name", "")).lower()
+            if any(token in dataset_name for token in tokens):
+                return True
+        return False
+
+    def _fallback_topic_classes(self, topic: str) -> list[str]:
+        """Build generic fallback class names from the configured topic."""
+        tokens = self._topic_tokens(topic)
+        base = tokens[0] if tokens else "topic"
+        return [
+            f"{base}_basics",
+            f"{base}_tools",
+            f"{base}_workflows",
+            f"{base}_issues",
+            f"{base}_advanced",
+        ]
+
+    def _class_bootstrap_signals(self, topic: str, class_name: str) -> tuple[str, str, str]:
+        """Build deterministic class-specific cues so bootstrap rows survive fuzzy deduplication."""
+        pool = [
+            "step-by-step setup",
+            "error diagnosis",
+            "tool selection",
+            "performance trade-offs",
+            "resource planning",
+            "workflow automation",
+            "safety checks",
+            "advanced tactics",
+            "beginner mistakes",
+            "quality review",
+            "team coordination",
+            "debugging patterns",
+            "practical examples",
+            "edge-case handling",
+            "best-practice checklists",
+            "expert heuristics",
+        ]
+        seed = sum(ord(char) for char in f"{topic}:{class_name}")
+        choices: list[str] = []
+        for offset in (0, 5, 9):
+            choice = pool[(seed + offset) % len(pool)]
+            if choice not in choices:
+                choices.append(choice)
+        class_phrase = class_name.replace("_", " ")
+        while len(choices) < 3:
+            choices.append(f"{class_phrase} case studies")
+        return (
+            f"{class_phrase} {choices[0]}",
+            f"{class_phrase} {choices[1]}",
+            f"{class_phrase} {choices[2]}",
         )
 
     def _is_text_column(self, series: pd.Series) -> bool:

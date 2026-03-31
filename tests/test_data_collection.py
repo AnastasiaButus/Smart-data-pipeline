@@ -414,3 +414,5 @@ def test_run_skips_sailing_sources_for_non_sailing_topic(
     assert isinstance(result, pd.DataFrame)
     assert len(result) > 0
     assert result["text"].str.contains("minecraft", case=False, regex=False).any()
+    assert result["source"].astype(str).str.startswith("topic_bootstrap").any()
+    assert not result["source"].astype(str).eq("synthetic").all()
