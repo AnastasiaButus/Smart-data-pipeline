@@ -1453,6 +1453,7 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
         return
 
     st.subheader("Введите тему для классификации текстов")
+    topic = st.session_state.get("topic", load_config().get("domain", {}).get("topic", "sailing and yacht navigation"))
     user_topic = st.text_input(
         "Тема пользователя",
         value=topic,
