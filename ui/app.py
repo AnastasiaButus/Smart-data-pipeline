@@ -743,6 +743,60 @@ def get_pipeline_stats() -> dict[str, Any]:
     }
 
 
+def get_workflow_progress(stats: dict[str, Any]) -> dict[str, Any]:
+    """Build a user-facing progress model that matches the dashboard flow."""
+    current_topic = str(st.session_state.get("topic", "")).strip()
+    classes_confirmed = bool(st.session_state.get("classes_confirmed", False))
+    sources_confirmed = bool(st.session_state.get("sources_confirmed", False))
+    data_ready = not stats.get("data_stale", True) and not bool(
+        st.session_state.get("pipeline_requires_refresh", False)
+    )
+    review_total = int(stats.get("review_total", 0))
+    reviewed = int(stats.get("reviewed", 0))
+    review_ratio = (reviewed / review_total) if review_total else (1.0 if data_ready else 0.0)
+    retrain_metrics = st.session_state.get("retrain_metrics")
+    retrain_topic = str(st.session_state.get("retrain_topic", "")).strip()
+    model_ready = bool(retrain_metrics) and retrain_topic == current_topic
+
+    progress_value = round(
+        (
+            int(bool(current_topic))
+            + int(classes_confirmed)
+            + int(sources_confirmed)
+            + int(data_ready)
+            + review_ratio
+            + int(model_ready)
+        )
+        / 6,
+        2,
+    )
+
+    if not data_ready:
+        hitl_text = "⬜ HITL проверка (доступна после запуска pipeline)"
+    elif review_total == 0:
+        hitl_text = "✅ HITL проверка (очередь не потребовалась)"
+    elif reviewed == review_total:
+        hitl_text = f"✅ HITL проверка ({reviewed}/{review_total} проверено)"
+    else:
+        hitl_text = f"⏳ HITL проверка ({reviewed}/{review_total} проверено)"
+
+    return {
+        "progress_value": progress_value,
+        "steps": [
+            f"{'✅' if current_topic else '⬜'} Тема выбрана",
+            f"{'✅' if classes_confirmed else '⬜'} Классы подтверждены",
+            f"{'✅' if sources_confirmed else '⬜'} Источники подтверждены",
+            f"{'✅' if data_ready else '⬜'} Данные обновлены pipeline",
+            hitl_text,
+            f"{'✅' if model_ready else '⬜'} Модель переобучена",
+        ],
+        "data_ready": data_ready,
+        "review_total": review_total,
+        "reviewed": reviewed,
+        "model_ready": model_ready,
+    }
+
+
 def compute_review_impact(threshold: float) -> tuple[int, float]:
     """Estimate queue size at the current confidence threshold."""
     if not get_topic_data_status()["is_fresh"]:
@@ -1144,24 +1198,24 @@ def render_sidebar(llm_client: GeminiLLMClient) -> float:
     if queue_count > 200:
         st.sidebar.warning("⚠️ Большая очередь! Рекомендуем снизить порог до 0.5")
 
-    st.sidebar.subheader("Прогресс пайплайна")
-    st.sidebar.progress(stats["progress_value"])
-    st.sidebar.write(f"✅ Сбор данных ({stats['raw_rows']} строк)")
-    st.sidebar.write(f"✅ Чистка данных ({stats['clean_rows']} строк)")
-    st.sidebar.write(f"✅ Авторазметка ({stats['annotated_rows']} строк)")
-    hitl_icon = "✅" if stats["review_total"] and stats["reviewed"] == stats["review_total"] else "⏳"
-    st.sidebar.write(f"{hitl_icon} HITL проверка ({stats['reviewed']}/{stats['review_total']} проверено)")
-    st.sidebar.write(
-        "✅ Active Learning" if stats.get("active_learning_done") else "⬜ Active Learning"
-    )
-    st.sidebar.write(
-        "✅ Обучение модели" if stats.get("model_training_done") else "⬜ Обучение модели"
-    )
+    workflow = get_workflow_progress(stats)
+    st.sidebar.subheader("Прогресс сценария")
+    st.sidebar.progress(workflow["progress_value"])
+    for step_text in workflow["steps"]:
+        st.sidebar.write(step_text)
+    if workflow["data_ready"]:
+        st.sidebar.caption(
+            f"Артефакты темы: raw {stats['raw_rows']} / clean {stats['clean_rows']} / annotated {stats['annotated_rows']}"
+        )
+        st.sidebar.caption(
+            "Active Learning: "
+            + ("готов" if stats.get("active_learning_done") else "ещё не запускался")
+        )
     if stats.get("data_stale"):
         st.sidebar.warning(
             "Текущие данные относятся к теме "
             f"'{stats.get('artifact_topic') or 'неизвестно'}'. "
-            "Для новой темы нужно заново прогнать pipeline."
+            "Сначала пройдите шаги онбординга, затем заново прогоните pipeline."
         )
 
     st.session_state["skip_active_learning"] = st.sidebar.checkbox(
@@ -1903,51 +1957,13 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
                 st.code(str(notice["details"]))
 
     if needs_pipeline_refresh:
-        with st.container(border=True):
-            st.markdown("### 🔄 Нужно обновить данные под новую тему")
-            st.markdown(
-                f"Сейчас выбрана тема **{current_topic}**, "
-                f"но на диске пока лежат артефакты для темы **{status['artifact_topic'] or 'неизвестно'}**."
-            )
-            st.caption(
-                "Это нормально после смены темы: сначала нужно заново собрать тексты, "
-                "разметить их и построить новую review queue."
-            )
-
-            step_col1, step_col2, step_col3 = st.columns(3)
-            with step_col1:
-                st.markdown("**1. Тема**")
-                st.caption(f"Выбрана: {current_topic}")
-            with step_col2:
-                st.markdown("**2. Обновление данных**")
-                st.caption("Нужно один раз прогнать pipeline")
-            with step_col3:
-                st.markdown("**3. Результат**")
-                st.caption("После этого оживут HITL, аналитика и чат")
-
-            if not onboarding_ready["can_run_pipeline"]:
-                st.warning(
-                    "Перед запуском pipeline завершите онбординг: "
-                    + ", ".join(onboarding_ready["missing_steps"])
-                    + "."
-                )
-
-            action_col1, action_col2 = st.columns([1.4, 1])
-            with action_col1:
-                if st.button(
-                    "▶ Обновить данные для этой темы",
-                    type="primary",
-                    key="run_pipeline_from_onboarding",
-                    use_container_width=True,
-                    disabled=not onboarding_ready["can_run_pipeline"],
-                ):
-                    with st.spinner("Запускаю pipeline. Это может занять несколько минут..."):
-                        run_pipeline_for_current_topic()
-                    return
-            with action_col2:
-                st.markdown("**Если хочешь вручную**")
-                with st.expander("Показать команду"):
-                    st.code("python pipeline/run_pipeline.py")
+        st.warning(
+            f"Для темы **{current_topic}** ещё нет свежих артефактов. "
+            f"Сейчас на диске лежат данные для темы **{status['artifact_topic'] or 'неизвестно'}**."
+        )
+        st.caption(
+            "Сначала завершите шаг 1 и шаг 2 ниже, затем запустите pipeline на шаге 3."
+        )
 
     st.subheader("Шаг 1. Проверьте тему и классы")
     with st.container(border=True):
@@ -2105,6 +2121,58 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
         write_config(cfg_data)
         st.success(f"Сохранено {len(selected)} источников!")
         st.rerun()
+
+    st.subheader("Шаг 3. Обновите данные и постройте очередь HITL")
+    with st.container(border=True):
+        if needs_pipeline_refresh:
+            st.markdown(
+                f"Сейчас выбрана тема **{current_topic}**, "
+                f"но свежие артефакты для неё ещё не построены."
+            )
+            st.caption(
+                "После запуска pipeline появятся новые тексты, review queue для HITL, "
+                "актуальная аналитика и контекст для чата."
+            )
+            if not onboarding_ready["can_run_pipeline"]:
+                st.warning(
+                    "Сначала завершите предыдущие шаги: "
+                    + ", ".join(onboarding_ready["missing_steps"])
+                    + "."
+                )
+            action_col1, action_col2 = st.columns([1.4, 1])
+            with action_col1:
+                if st.button(
+                    "▶ Обновить данные для этой темы",
+                    type="primary",
+                    key="run_pipeline_from_onboarding",
+                    use_container_width=True,
+                    disabled=not onboarding_ready["can_run_pipeline"],
+                ):
+                    with st.spinner("Запускаю pipeline. Это может занять несколько минут..."):
+                        run_pipeline_for_current_topic()
+                    return
+            with action_col2:
+                st.markdown("**Если хочешь вручную**")
+                with st.expander("Показать команду"):
+                    st.code("python pipeline/run_pipeline.py")
+        else:
+            st.success(
+                "Данные для текущей темы уже обновлены. Можно переходить к HITL, аналитике и чату."
+            )
+            st.caption(
+                "Если снова измените тему, классы или источники, этот шаг снова потребует новый запуск pipeline."
+            )
+
+    st.subheader("Шаг 4. Проверьте спорные примеры в HITL")
+    with st.container(border=True):
+        if needs_pipeline_refresh:
+            st.info(
+                "HITL выполняется после шага 3. Сначала нужно получить новую review queue для текущей темы."
+            )
+        else:
+            st.success(
+                "После шага 3 откройте вкладку **Проверка меток (HITL ★)**: там будут спорные примеры новой темы."
+            )
 
 
 def normalize_source_suggestions(sources_data: list[Any]) -> pd.DataFrame:
