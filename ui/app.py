@@ -412,6 +412,11 @@ def render_sidebar(llm_client: GeminiLLMClient) -> float:
         ),
         key="classes_text",
     )
+    st.sidebar.caption(
+        "💡 Классы лучше писать на английском — "
+        "zero-shot классификация работает точнее "
+        "когда метки на том же языке что и модель."
+    )
 
     col1, col2 = st.sidebar.columns(2)
     with col1:
@@ -529,6 +534,11 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
         value=st.session_state.get("topic", ""),
         key="onboarding_topic_input",
     ).strip()
+    st.caption(
+        "💡 Рекомендуем вводить тему на английском — "
+        "модель bart-large-mnli обучена на английском, "
+        "это улучшает качество авторазметки."
+    )
     if topic:
         st.session_state["topic"] = topic
 

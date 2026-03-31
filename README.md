@@ -28,6 +28,13 @@ python pipeline/run_pipeline.py
 streamlit run ui/app.py
 ```
 
+## How to change the topic
+
+> **💡 Language tip:** Enter topic and class names in English for best results.
+> The zero-shot model (`facebook/bart-large-mnli`) is trained on English and
+> produces higher confidence scores with English labels. Russian labels will
+> work but may reduce classification accuracy.
+
 ## Data Sources
 
 | Source | Type | License | Status |
