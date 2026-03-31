@@ -875,19 +875,20 @@ def render_analytics_tab(threshold: float) -> None:
     with notebook_col1:
         st.markdown("**EDA ноутбук**")
         st.caption("Исходный анализ данных с графиками")
-        st.code("jupyter notebook notebooks/eda.ipynb", language="bash")
+        st.code(".venv\\Scripts\\activate && jupyter notebook notebooks/eda.ipynb", language="bash")
 
     with notebook_col2:
         st.markdown("**AL эксперимент**")
         st.caption("Сравнение стратегий Active Learning")
         st.code(
-            "jupyter notebook notebooks/al_experiment.ipynb",
+            ".venv\\Scripts\\activate && jupyter notebook notebooks/al_experiment.ipynb",
             language="bash",
         )
 
     st.info(
         "💡 Запустите команду в терминале из папки проекта. "
-        "Ноутбуки откроются в браузере автоматически."
+        "Команда активирует нужное окружение и откроет "
+        "ноутбук в браузере автоматически."
     )
 
     st.subheader("📋 Сформировать отчёт")
