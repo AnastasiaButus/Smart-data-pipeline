@@ -223,6 +223,58 @@ def test_check_quality_returns_metrics(temp_project: Path) -> None:
     assert metrics["review_label_count"] == 1
 
 
+def test_check_quality_includes_kappa(temp_project: Path) -> None:
+    """Quality metrics should include Cohen's kappa when HITL corrections exist."""
+    agent = _make_agent(temp_project)
+    df = pd.DataFrame(
+        {
+            "id": ["1", "2", "3"],
+            "text": ["a" * 60, "b" * 60, "c" * 60],
+            "source": ["s1", "s2", "s3"],
+            "label": ["navigation", "safety", "equipment"],
+            "confidence": [0.9, 0.8, 0.7],
+            "label_source": ["zero_shot", "zero_shot", "zero_shot"],
+        }
+    )
+    review_queue = pd.DataFrame(
+        {
+            "id": ["1", "2"],
+            "text": ["a" * 60, "b" * 60],
+            "label": ["navigation", "safety"],
+            "confidence": [0.9, 0.8],
+            "source": ["s1", "s2"],
+            "suggested_label": ["navigation", "safety"],
+            "corrected_label": ["navigation", "equipment"],
+        }
+    )
+    review_queue.to_csv(temp_project / "data" / "review_queue.csv", index=False, encoding="utf-8")
+
+    metrics = agent.check_quality(df)
+
+    assert "cohens_kappa" in metrics
+    assert metrics["kappa_n_samples"] == 2
+
+
+def test_kappa_not_calculated_without_hitl(temp_project: Path) -> None:
+    """Kappa should remain unavailable when review_queue.csv is missing or empty."""
+    agent = _make_agent(temp_project)
+    df = pd.DataFrame(
+        {
+            "id": ["1", "2"],
+            "text": ["a" * 60, "b" * 60],
+            "source": ["s1", "s2"],
+            "label": ["navigation", "safety"],
+            "confidence": [0.9, 0.4],
+            "label_source": ["zero_shot", "zero_shot"],
+        }
+    )
+
+    metrics = agent.check_quality(df)
+
+    assert metrics["cohens_kappa"] is None
+    assert "not calculated" in metrics["kappa_interpretation"]
+
+
 def test_generate_spec_saves_file(
     temp_project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

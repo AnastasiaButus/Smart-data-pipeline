@@ -190,11 +190,46 @@ class AnnotationAgent:
 
     def check_quality(self, df: pd.DataFrame) -> dict[str, Any]:
         """Compute compact quality metrics for the current annotation output."""
+        from sklearn.metrics import cohen_kappa_score
+
         working_df = self._prepare_labeled_dataframe(df)
         total_labeled = int(len(working_df))
         confidence_series = working_df["confidence"].astype(float)
         low_conf_mask = confidence_series < self._confidence_threshold
         high_conf_mask = confidence_series >= self._confidence_threshold
+
+        kappa: float | None = None
+        kappa_n_samples = 0
+        if self._review_queue_path.exists():
+            review_queue = pd.read_csv(self._review_queue_path)
+            corrected = review_queue[
+                review_queue["corrected_label"].notna()
+                & (review_queue["corrected_label"] != "")
+            ]
+            if len(corrected) >= 2:
+                corrected = corrected.copy()
+                corrected["id"] = corrected["id"].astype(str)
+                labeled_ids = working_df[["id"]].copy()
+                labeled_ids["id"] = labeled_ids["id"].astype(str)
+                merged = corrected.merge(
+                    labeled_ids,
+                    on="id",
+                    how="inner",
+                )
+                if len(merged) >= 2:
+                    try:
+                        kappa = cohen_kappa_score(
+                            merged["label"],
+                            merged["corrected_label"],
+                        )
+                        kappa_n_samples = int(len(merged))
+                        logger.info(
+                            "Cohen's κ = {:.3f} on {} samples",
+                            kappa,
+                            kappa_n_samples,
+                        )
+                    except Exception as exc:
+                        logger.warning("Cohen's κ calculation failed: {}", exc)
 
         metrics = {
             "total_labeled": total_labeled,
@@ -216,9 +251,31 @@ class AnnotationAgent:
             "label_source_distribution": (
                 working_df["label_source"].astype(str).value_counts().to_dict()
             ),
+            "cohens_kappa": round(kappa, 3) if kappa is not None else None,
+            "kappa_n_samples": kappa_n_samples,
+            "kappa_interpretation": (
+                "excellent (>0.8)"
+                if kappa is not None and kappa > 0.8
+                else "good (0.6-0.8)"
+                if kappa is not None and kappa > 0.6
+                else "moderate (0.4-0.6)"
+                if kappa is not None and kappa > 0.4
+                else "fair (<0.4)"
+                if kappa is not None
+                else "not calculated (need HITL corrections)"
+            ),
         }
         self._last_quality = metrics
         return metrics
+
+    def calculate_kappa(self, df: pd.DataFrame) -> dict[str, Any]:
+        """Calculate Cohen's kappa between auto labels and HITL corrections."""
+        metrics = self.check_quality(df)
+        return {
+            "kappa": metrics["cohens_kappa"],
+            "n_samples": metrics["kappa_n_samples"],
+            "interpretation": metrics["kappa_interpretation"],
+        }
 
     def flag_for_review(self, df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Split labeled rows into confident and review subsets and persist the queue."""
