@@ -810,40 +810,136 @@ def compute_review_impact(threshold: float) -> tuple[int, float]:
     return count, pct
 
 
+def _rss_display_name(feed_url: str) -> str:
+    """Return a short human-friendly RSS source label."""
+    normalized = str(feed_url or "").strip().lower().rstrip("/")
+    if "yachtingworld" in normalized:
+        return "Yachting World"
+    if "cruisingworld" in normalized:
+        return "Cruising World"
+    if "sailmagazine" in normalized:
+        return "Sail Magazine"
+    if "48north" in normalized:
+        return "48° North"
+    domain = urlparse(normalized).netloc or normalized
+    return domain.removeprefix("www.")
+
+
+def configured_source_suggestions(topic: str) -> dict[str, Any]:
+    """Build granular source suggestions from current config.yaml."""
+    cfg = load_config()
+    sources_cfg = cfg.get("sources", {}) or {}
+    suggestions: list[dict[str, Any]] = []
+
+    hf_cfg = sources_cfg.get("huggingface", {}) or {}
+    if hf_cfg.get("enabled", True):
+        for ds_spec in hf_cfg.get("datasets", []):
+            ds_name = str(ds_spec.get("name", "")).strip()
+            if not ds_name:
+                continue
+            suggestions.append(
+                {
+                    "name": ds_name,
+                    "type": "dataset",
+                    "url": f"https://huggingface.co/datasets/{ds_name}",
+                    "license": "depends on dataset",
+                    "estimated_rows": int(ds_spec.get("limit", 300) or 300),
+                    "risk_level": "low",
+                }
+            )
+
+    rss_cfg = sources_cfg.get("rss", {}) or {}
+    if rss_cfg.get("enabled", True):
+        for feed_url in rss_cfg.get("feeds", []) or []:
+            feed = str(feed_url).strip()
+            if not feed:
+                continue
+            suggestions.append(
+                {
+                    "name": _rss_display_name(feed),
+                    "type": "rss",
+                    "url": feed,
+                    "license": "editorial use",
+                    "estimated_rows": 20 if "yachtingworld" in feed.lower() else 10,
+                    "risk_level": "medium",
+                }
+            )
+
+    se_cfg = sources_cfg.get("stackexchange", {}) or {}
+    if se_cfg.get("enabled", True):
+        site = str(se_cfg.get("site", "outdoors")).strip() or "outdoors"
+        tag = str(se_cfg.get("tag", topic or "sailing")).strip() or (topic or "sailing")
+        suggestions.append(
+            {
+                "name": f"{site}.stackexchange.com [{tag}]",
+                "type": "q&a",
+                "url": f"https://{site}.stackexchange.com/questions/tagged/{quote_plus(tag)}",
+                "license": "CC BY-SA 4.0",
+                "estimated_rows": 80,
+                "risk_level": "low",
+            }
+        )
+
+    scraping_cfg = sources_cfg.get("scraping", {}) or {}
+    forum_cfg = scraping_cfg.get("cruisers_forum", {}) or {}
+    if scraping_cfg.get("enabled", True) and forum_cfg.get("enabled", True):
+        base_url = str(forum_cfg.get("base_url", "https://www.cruisersforum.com")).strip()
+        suggestions.append(
+            {
+                "name": "Cruisers Forum",
+                "type": "forum",
+                "url": base_url,
+                "license": "robots.txt checked",
+                "estimated_rows": 30,
+                "risk_level": "medium",
+            }
+        )
+        suggestions.append(
+            {
+                "name": "Sailing Forums",
+                "type": "forum",
+                "url": "https://www.sailingforums.com",
+                "license": "robots.txt checked",
+                "estimated_rows": 20,
+                "risk_level": "medium",
+            }
+        )
+
+    return {
+        "sources": suggestions,
+        "hf_datasets": [
+            str(ds.get("name", "")).strip()
+            for ds in hf_cfg.get("datasets", [])
+            if str(ds.get("name", "")).strip()
+        ],
+        "suggested_classes": fallback_classes_for_topic(topic),
+    }
+
+
+def merge_source_suggestions(*source_lists: list[Any]) -> list[dict[str, Any]]:
+    """Merge source suggestions preserving first-seen items and deduplicating by URL/name."""
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for source_list in source_lists:
+        for source in source_list or []:
+            payload = source if isinstance(source, dict) else {"name": str(source)}
+            url = str(payload.get("url", "")).strip().lower()
+            name = str(payload.get("name") or payload.get("source") or payload.get("title") or "").strip().lower()
+            key = url or name
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(payload)
+    return merged
+
+
 def heuristic_source_suggestions(topic: str) -> dict[str, Any]:
     """Return fallback source suggestions in Russian for onboarding."""
     safe_topic = topic or "text classification"
     if is_sailing_topic(safe_topic):
-        return {
-            "sources": [
-                {
-                    "name": "StackExchange / форумы",
-                    "type": "Q&A / forum",
-                    "url": "https://api.stackexchange.com",
-                    "license": "CC BY-SA 4.0",
-                    "estimated_rows": 100,
-                    "risk_level": "low",
-                },
-                {
-                    "name": "RSS отраслевых медиа",
-                    "type": "RSS",
-                    "url": "https://www.yachtingworld.com/feed",
-                    "license": "editorial use",
-                    "estimated_rows": 40,
-                    "risk_level": "medium",
-                },
-                {
-                    "name": "HuggingFace dataset",
-                    "type": "dataset",
-                    "url": "https://huggingface.co/datasets",
-                    "license": "depends on dataset",
-                    "estimated_rows": 200,
-                    "risk_level": "low",
-                },
-            ],
-            "hf_datasets": [f"{safe_topic} classification dataset"],
-            "suggested_classes": fallback_classes_for_topic(safe_topic),
-        }
+        configured = configured_source_suggestions(safe_topic)
+        if configured["sources"]:
+            return configured
 
     encoded_topic = quote_plus(safe_topic)
     return {
@@ -896,6 +992,7 @@ def heuristic_source_suggestions(topic: str) -> dict[str, Any]:
 
 def find_sources_with_llm(topic: str, llm_client: GeminiLLMClient) -> dict[str, Any]:
     """Use Gemini to suggest candidate sources or return a heuristic fallback."""
+    fallback_payload = heuristic_source_suggestions(topic)
     prompt = (
         f'For topic: "{topic}", suggest in Russian JSON: '
         '{"sources":[{"name":"...","type":"...","url":"...","license":"...",'
@@ -904,10 +1001,20 @@ def find_sources_with_llm(topic: str, llm_client: GeminiLLMClient) -> dict[str, 
         "JSON only, max 5 sources."
     )[:800]
     result = llm_client.generate_json(prompt)
-    if isinstance(result, dict) and result.get("sources"):
-        return result
+    if isinstance(result, dict):
+        merged_sources = merge_source_suggestions(
+            result.get("sources", []),
+            fallback_payload.get("sources", []),
+        )
+        if merged_sources:
+            result["sources"] = merged_sources
+            if not result.get("hf_datasets"):
+                result["hf_datasets"] = fallback_payload.get("hf_datasets", [])
+            if not result.get("suggested_classes"):
+                result["suggested_classes"] = fallback_payload.get("suggested_classes", [])
+            return result
     logger.warning("LLM onboarding fallback used for source suggestions")
-    return heuristic_source_suggestions(topic)
+    return fallback_payload
 
 
 def get_topic_emoji(topic: str) -> str:

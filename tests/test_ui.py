@@ -209,3 +209,36 @@ def test_compute_onboarding_readiness_blocks_missing_confirmations() -> None:
         "подтвердите классы",
         "подтвердите источники",
     ]
+
+
+def test_sailing_heuristic_sources_are_granular() -> None:
+    """Sailing onboarding suggestions should expose concrete sites and dataset links."""
+    payload = ui_app.heuristic_source_suggestions("sailing and yacht navigation")
+    names = {str(item.get("name", "")) for item in payload["sources"]}
+
+    assert "Yachting World" in names
+    assert "Cruising World" in names
+    assert "Cruisers Forum" in names
+    assert "Sailing Forums" in names
+    assert "dair-ai/emotion" in names
+
+
+def test_merge_source_suggestions_deduplicates_by_url() -> None:
+    """Merging UI suggestions should keep one copy per concrete source."""
+    merged = ui_app.merge_source_suggestions(
+        [
+            {"name": "Yachting World", "url": "https://www.yachtingworld.com/feed"},
+            {"name": "Cruisers Forum", "url": "https://www.cruisersforum.com"},
+        ],
+        [
+            {"name": "Yachting World feed", "url": "https://www.yachtingworld.com/feed"},
+            {"name": "Sailing Forums", "url": "https://www.sailingforums.com"},
+        ],
+    )
+
+    assert len(merged) == 3
+    assert {item["name"] for item in merged} >= {
+        "Yachting World",
+        "Cruisers Forum",
+        "Sailing Forums",
+    }

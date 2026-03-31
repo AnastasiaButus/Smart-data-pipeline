@@ -120,7 +120,8 @@ class DataCollectionAgent:
 
         Strategy:
         1. Try Cruisers Forum with browser User-Agent.
-        2. If robots.txt blocks — fall back to www.sailingforums.com.
+        2. Also try www.sailingforums.com when available.
+        3. Merge both forum sources into one dataframe.
         Returns empty DataFrame on any unrecoverable error.
         """
         scraping_cfg = self._cfg["sources"]["scraping"]
@@ -137,19 +138,31 @@ class DataCollectionAgent:
         cf_base = forum_cfg.get("base_url", "https://www.cruisersforum.com")
         sections: list[str] = forum_cfg.get("sections", ["/forums/f19/", "/forums/f4/"])
         pages_per_section: int = forum_cfg.get("pages_per_section", 3)
+        collected_frames: list[pd.DataFrame] = []
 
         if self._is_crawl_allowed(cf_base, _BROWSER_UA):
             result = self._scrape_cruisers_forum(cf_base, sections, pages_per_section)
             if not result.empty:
-                return result
-            logger.info("Cruisers Forum returned 0 rows — falling back to sailingforums.com")
+                collected_frames.append(result)
+            else:
+                logger.info("Cruisers Forum returned 0 rows")
         else:
             logger.warning(
-                "robots.txt blocks crawling on {} — falling back to sailingforums.com", cf_base
+                "robots.txt blocks crawling on {} — skipping this forum source", cf_base
             )
 
         # --- Variant B: sailingforums.com ---
-        return self._scrape_sailingforums()
+        fallback_result = self._scrape_sailingforums()
+        if not fallback_result.empty:
+            collected_frames.append(fallback_result)
+
+        if not collected_frames:
+            return self._empty_df()
+        if len(collected_frames) == 1:
+            return collected_frames[0]
+        merged = pd.concat(collected_frames, ignore_index=True)
+        logger.info("Combined forum sources: {} rows", len(merged))
+        return merged
 
     def _scrape_cruisers_forum(
         self, base_url: str, sections: list[str], pages_per_section: int
