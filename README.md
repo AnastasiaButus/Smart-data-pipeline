@@ -30,13 +30,14 @@ streamlit run ui/app.py
 
 ## Data Sources
 
-| Source | Type | License/Status |
-|--------|------|----------------|
-| HuggingFace (`dair-ai/emotion`) | dataset | Apache 2.0 |
-| HuggingFace (`mteb/tweet_sentiment_extraction`) | dataset | MIT |
-| StackExchange Sailing | API | CC BY-SA 4.0 |
-| RSS feeds (`Yachting World`, `Cruising World`, `Sail Magazine`, `48 North`) | RSS scraping | editorial / educational use |
-| Sailing Forums | web scraping | robots.txt checked, educational use |
+| Source | Type | License | Status |
+|--------|------|---------|--------|
+| HuggingFace (`dair-ai/emotion`) | dataset | Apache 2.0 | ✅ |
+| HuggingFace (`mteb/tweet_sentiment_extraction`) | dataset | MIT | ✅ |
+| Kaggle datasets | API | varies | ✅ |
+| StackExchange Sailing | API | CC BY-SA 4.0 | ✅ |
+| RSS feeds (`Yachting World`, `Cruising World`, `Sail Magazine`, `48 North`) | RSS scraping | editorial | ⚠️ |
+| Sailing Forums | web scraping | robots.txt checked | ⚠️ |
 
 ## 🕷️ Scraping approach
 
@@ -101,7 +102,8 @@ Streamlit is the UI layer for HITL review, analytics, reporting, and chat with p
 ## ✨ Features
 
 ### 🤖 Multi-agent pipeline
-- **DataCollectionAgent** — сбор из нескольких источников: HuggingFace datasets, StackExchange API, RSS-ленты и форумы
+- **DataCollectionAgent** — сбор из нескольких источников: HuggingFace datasets, Kaggle API, StackExchange API, RSS-ленты и форумы
+- Kaggle API — тематические датасеты (`sailing-boats`, `ocean ships`)
 - **DataQualityAgent** — автоматическая чистка: HTML-артефакты, дубликаты, fuzzy matching и фильтрация коротких текстов
 - **AnnotationAgent** — zero-shot авторазметка (`facebook/bart-large-mnli`) + confidence scoring + review queue
 - **ActiveLearningAgent** — стратегии `entropy`, `margin`, `random` + learning curve и сравнение стратегий

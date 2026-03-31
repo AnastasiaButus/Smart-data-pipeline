@@ -1240,6 +1240,82 @@ def build_sources_detail(sources_data: list[Any]) -> dict[str, Any]:
                 },
             ],
         },
+        "Kaggle datasets": {
+            "description": "Тематические ML датасеты",
+            "license": "varies (CC / public domain)",
+            "risk": "✅ Свободно",
+            "items": [
+                {
+                    "name": "sailing-boats database",
+                    "url": "https://www.kaggle.com/datasets/opendatasource/sailing-boats",
+                    "rows": 200,
+                    "enabled": True,
+                },
+                {
+                    "name": "ocean ship logbooks 1750-1850",
+                    "url": "https://www.kaggle.com/datasets/cwiloc/climate-data-from-ocean-ships",
+                    "rows": 200,
+                    "enabled": True,
+                },
+            ],
+        },
+        "Kaggle datasets": {
+            "description": "Тематические ML датасеты",
+            "license": "varies (CC / public domain)",
+            "risk": "✅ Свободно",
+            "items": [
+                {
+                    "name": "sailing-boats database",
+                    "url": "https://www.kaggle.com/datasets/opendatasource/sailing-boats",
+                    "rows": 200,
+                    "enabled": True,
+                },
+                {
+                    "name": "ocean ship logbooks 1750-1850",
+                    "url": "https://www.kaggle.com/datasets/cwiloc/climate-data-from-ocean-ships",
+                    "rows": 200,
+                    "enabled": True,
+                },
+            ],
+        },
+        "Kaggle datasets": {
+            "description": "Тематические ML датасеты",
+            "license": "varies (CC / public domain)",
+            "risk": "✅ Свободно",
+            "items": [
+                {
+                    "name": "sailing-boats database",
+                    "url": "https://www.kaggle.com/datasets/opendatasource/sailing-boats",
+                    "rows": 200,
+                    "enabled": True,
+                },
+                {
+                    "name": "ocean ship logbooks 1750-1850",
+                    "url": "https://www.kaggle.com/datasets/cwiloc/climate-data-from-ocean-ships",
+                    "rows": 200,
+                    "enabled": True,
+                },
+            ],
+        },
+        "Kaggle datasets": {
+            "description": "Тематические ML датасеты",
+            "license": "varies (CC / public domain)",
+            "risk": "✅ Свободно",
+            "items": [
+                {
+                    "name": "sailing-boats database",
+                    "url": "https://www.kaggle.com/datasets/opendatasource/sailing-boats",
+                    "rows": 200,
+                    "enabled": True,
+                },
+                {
+                    "name": "ocean ship logbooks 1750-1850",
+                    "url": "https://www.kaggle.com/datasets/cwiloc/climate-data-from-ocean-ships",
+                    "rows": 200,
+                    "enabled": True,
+                },
+            ],
+        },
         "RSS отраслевых медиа": {
             "description": "Новости яхтинга и парусного спорта",
             "license": "editorial use",
@@ -1727,6 +1803,114 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
             )
             st.success(f"Сохранено {len(selected)} источников!")
             st.rerun()
+
+
+def build_sources_detail(sources_data: list[Any]) -> dict[str, Any]:
+    """Final override: onboarding sources including Kaggle datasets."""
+    _ = sources_data
+    return {
+        "StackExchange / форумы": {
+            "description": "Q&A форумы по теме",
+            "license": "CC BY-SA 4.0",
+            "risk": "✅ Свободно",
+            "items": [
+                {
+                    "name": "sailing.stackexchange.com",
+                    "url": "https://sailing.stackexchange.com",
+                    "rows": 98,
+                    "enabled": True,
+                },
+                {
+                    "name": "outdoors.stackexchange.com",
+                    "url": "https://outdoors.stackexchange.com",
+                    "rows": 50,
+                    "enabled": False,
+                },
+            ],
+        },
+        "HuggingFace datasets": {
+            "description": "Открытые ML датасеты",
+            "license": "зависит от датасета",
+            "risk": "✅ Свободно",
+            "items": [
+                {
+                    "name": "dair-ai/emotion",
+                    "url": "https://huggingface.co/datasets/dair-ai/emotion",
+                    "rows": 300,
+                    "enabled": True,
+                },
+                {
+                    "name": "mteb/tweet_sentiment_extraction",
+                    "url": "https://huggingface.co/datasets/mteb/tweet_sentiment_extraction",
+                    "rows": 300,
+                    "enabled": True,
+                },
+            ],
+        },
+        "Kaggle datasets": {
+            "description": "Тематические ML датасеты",
+            "license": "varies (CC / public domain)",
+            "risk": "✅ Свободно",
+            "items": [
+                {
+                    "name": "sailing-boats database",
+                    "url": "https://www.kaggle.com/datasets/opendatasource/sailing-boats",
+                    "rows": 200,
+                    "enabled": True,
+                },
+                {
+                    "name": "ocean ship logbooks 1750-1850",
+                    "url": "https://www.kaggle.com/datasets/cwiloc/climate-data-from-ocean-ships",
+                    "rows": 200,
+                    "enabled": True,
+                },
+            ],
+        },
+        "RSS отраслевых медиа": {
+            "description": "Новости яхтинга и парусного спорта",
+            "license": "editorial use",
+            "risk": "⚠️ С оговорками",
+            "items": [
+                {
+                    "name": "Yachting World",
+                    "url": "https://www.yachtingworld.com/feed",
+                    "rows": 30,
+                    "enabled": True,
+                },
+                {
+                    "name": "Cruising World",
+                    "url": "https://www.cruisingworld.com/feed/",
+                    "rows": 10,
+                    "enabled": True,
+                },
+                {
+                    "name": "Sail Magazine",
+                    "url": "https://www.sailmagazine.com/feed",
+                    "rows": 10,
+                    "enabled": True,
+                },
+                {
+                    "name": "48° North",
+                    "url": "https://www.48north.com/feed/",
+                    "rows": 10,
+                    "enabled": True,
+                },
+            ],
+        },
+        "Форумы": {
+            "description": "Тематические форумы яхтсменов",
+            "license": "robots.txt checked",
+            "risk": "⚠️ С оговорками",
+            "items": [
+                {
+                    "name": "Sailing Forums",
+                    "url": "https://www.sailingforums.com",
+                    "rows": 20,
+                    "enabled": True,
+                }
+            ],
+        },
+    }
 
 
 def main() -> None:

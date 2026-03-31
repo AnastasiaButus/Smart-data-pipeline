@@ -351,6 +351,78 @@ class DataCollectionAgent:
         return df
 
     # ------------------------------------------------------------------ #
+    #  Source: Kaggle                                                     #
+    # ------------------------------------------------------------------ #
+
+    def fetch_kaggle(self) -> pd.DataFrame:
+        """Load configured Kaggle datasets for the current topic."""
+        import os
+        import tempfile
+        import zipfile  # noqa: F401
+        from glob import glob
+
+        kaggle_cfg = self._cfg.get("sources", {}).get("kaggle", {})
+        if not kaggle_cfg.get("enabled", True):
+            logger.info("Kaggle source disabled in config")
+            return self._empty_df()
+
+        token = os.getenv("KAGGLE_API_TOKEN", "")
+        if not token:
+            logger.warning("KAGGLE_API_TOKEN not set, skipping")
+            return self._empty_df()
+
+        try:
+            os.environ["KAGGLE_API_TOKEN"] = token
+            import kaggle  # deferred heavy import
+
+            kaggle.api.authenticate()
+
+            all_dfs: list[pd.DataFrame] = []
+            for ds in kaggle_cfg.get("datasets", []):
+                if not ds.get("enabled", True):
+                    continue
+                try:
+                    logger.info("Downloading Kaggle dataset: {}", ds["ref"])
+                    with tempfile.TemporaryDirectory() as tmp:
+                        kaggle.api.dataset_download_files(
+                            ds["ref"],
+                            path=tmp,
+                            unzip=True,
+                            quiet=True,
+                        )
+
+                        csvs = glob(f"{tmp}/**/*.csv", recursive=True)
+                        for csv_path in csvs[:1]:
+                            df_raw = pd.read_csv(csv_path, nrows=ds.get("limit", 200))
+                            text_col = ds.get("text_column")
+                            if not text_col:
+                                str_cols = df_raw.select_dtypes(include="object").columns
+                                text_col = str_cols[0] if len(str_cols) > 0 else None
+                            if text_col and text_col in df_raw.columns:
+                                slug = ds["ref"].split("/")[-1]
+                                df_out = pd.DataFrame(
+                                    {
+                                        "text": df_raw[text_col].astype(str),
+                                        "label": "unlabeled",
+                                        "source": f"kaggle_{slug}",
+                                        "collected_at": datetime.now(timezone.utc).isoformat(),
+                                    }
+                                )
+                                df_out["id"] = [str(uuid.uuid4()) for _ in range(len(df_out))]
+                                all_dfs.append(df_out[self._COLUMNS])
+                                logger.info("Kaggle {}: {} rows", ds["ref"], len(df_out))
+                except Exception as exc:
+                    logger.warning("Kaggle {} failed: {}", ds.get("ref", "unknown"), exc)
+                    continue
+
+            if all_dfs:
+                return pd.concat(all_dfs, ignore_index=True)
+        except Exception as exc:
+            logger.warning("Kaggle fetch failed: {}", exc)
+
+        return self._empty_df()
+
+    # ------------------------------------------------------------------ #
     #  Generic scrape dispatcher                                           #
     # ------------------------------------------------------------------ #
 
@@ -419,13 +491,14 @@ class DataCollectionAgent:
         logger.info("DataCollectionAgent.run() started")
         source_fns = {
             "huggingface": self.fetch_huggingface,
+            "kaggle": self.fetch_kaggle,
             "forum": self.scrape_forum,
             "rss": self.fetch_rss,
             "stackexchange": self.fetch_stackexchange,
         }
         results: dict[str, pd.DataFrame] = {}
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(fn): name for name, fn in source_fns.items()}
             for future in as_completed(futures):
                 name = futures[future]

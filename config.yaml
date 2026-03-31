@@ -56,6 +56,17 @@ sources:
       text_column: text
       limit: 300
     enabled: true
+  kaggle:
+    enabled: true
+    datasets:
+    - ref: opendatasource/sailing-boats
+      text_column: null
+      limit: 200
+      enabled: true
+    - ref: cwiloc/climate-data-from-ocean-ships
+      text_column: null
+      limit: 200
+      enabled: true
   scraping:
     cruisers_forum:
       base_url: https://www.cruisersforum.com

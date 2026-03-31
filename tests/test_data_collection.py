@@ -304,3 +304,16 @@ def test_rss_new_feeds(agent: DataCollectionAgent) -> None:
     )
     assert isinstance(result, pd.DataFrame)
     assert len(result) == len(rss_feeds), "Should have one entry per feed"
+
+
+# ------------------------------------------------------------------ #
+#  16. Kaggle graceful degradation                                    #
+# ------------------------------------------------------------------ #
+
+def test_kaggle_fetch_graceful(agent: DataCollectionAgent, monkeypatch: pytest.MonkeyPatch) -> None:
+    """fetch_kaggle() must gracefully skip when KAGGLE_API_TOKEN is absent."""
+    monkeypatch.delenv("KAGGLE_API_TOKEN", raising=False)
+    result = agent.fetch_kaggle()
+    assert isinstance(result, pd.DataFrame)
+    assert result.empty
+    assert list(result.columns) == REQUIRED_COLUMNS
