@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -115,6 +116,67 @@ def clear_topic_source_state() -> None:
     st.session_state["messages"] = []
     st.session_state["generated_report_content"] = ""
     st.session_state.pop("confirmed_sources", None)
+
+
+def run_pipeline_for_current_topic() -> None:
+    """Run the full pipeline for the currently selected topic and persist a user-facing status."""
+    topic = str(st.session_state.get("topic", SAILING_TOPIC)).strip() or SAILING_TOPIC
+    command = [sys.executable, str(ROOT / "pipeline" / "run_pipeline.py")]
+    logger.info("Запуск pipeline из UI для темы '{}'", topic)
+    completed = subprocess.run(
+        command,
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    combined_output = "\n".join(
+        part.strip() for part in [completed.stdout, completed.stderr] if str(part).strip()
+    )
+    st.session_state["auto_run_pipeline_pending"] = False
+    st.session_state["last_pipeline_run_output"] = combined_output
+    st.session_state["last_pipeline_run_code"] = int(completed.returncode)
+
+    if completed.returncode == 0:
+        notice = {
+            "kind": "success",
+            "message": (
+                f"Pipeline для темы **{topic}** завершён. "
+                "Данные, HITL и аналитика обновлены."
+            ),
+            "details": combined_output,
+        }
+        if "RESOURCE_EXHAUSTED" in combined_output:
+            notice = {
+                "kind": "warning",
+                "message": (
+                    f"Pipeline для темы **{topic}** завершён, но Gemini quota была исчерпана "
+                    "и часть LLM-шагов отработала через fallback."
+                ),
+                "details": combined_output,
+            }
+        st.session_state["pipeline_refresh_notice"] = notice
+        ensure_review_state(force_reload=True)
+        st.rerun()
+
+    quota_exhausted = "RESOURCE_EXHAUSTED" in combined_output or "Quota exceeded" in combined_output
+    if quota_exhausted:
+        message = (
+            f"Pipeline для темы **{topic}** не завершился: у Gemini закончилась квота. "
+            "Подождите сброса лимита, подключите другой API key или платный план."
+        )
+    else:
+        message = (
+            f"Pipeline для темы **{topic}** завершился с ошибкой. "
+            "Посмотрите лог ниже и попробуйте повторить запуск."
+        )
+    st.session_state["pipeline_refresh_notice"] = {
+        "kind": "error",
+        "message": message,
+        "details": combined_output,
+    }
+    st.rerun()
 
 
 def is_sailing_topic(topic: str) -> bool:
@@ -304,6 +366,10 @@ def init_state() -> None:
     st.session_state.setdefault("generated_report_type", "html")
     st.session_state.setdefault("skip_active_learning", False)
     st.session_state.setdefault("skip_hitl", False)
+    st.session_state.setdefault("auto_run_pipeline_pending", False)
+    st.session_state.setdefault("pipeline_refresh_notice", None)
+    st.session_state.setdefault("last_pipeline_run_output", "")
+    st.session_state.setdefault("last_pipeline_run_code", 0)
     ensure_review_state()
 
 
@@ -357,6 +423,10 @@ def topic_dialog():
                         topic=normalized_topic,
                         classes=default_classes,
                     )
+                    st.session_state["auto_run_pipeline_pending"] = True
+                    st.session_state["pipeline_refresh_notice"] = None
+                    st.session_state["last_pipeline_run_output"] = ""
+                    st.session_state["last_pipeline_run_code"] = 0
                 else:
                     persist_domain_settings(topic=normalized_topic)
                 st.session_state["topic"] = normalized_topic
@@ -1483,7 +1553,48 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
         "topic",
         load_config().get("domain", {}).get("topic", "sailing and yacht navigation"),
     )
+    status = get_topic_data_status()
     st.title(f"{get_topic_emoji(current_topic)} Smart Data Pipeline")
+
+    notice = st.session_state.get("pipeline_refresh_notice")
+    if isinstance(notice, dict) and notice.get("message"):
+        notice_kind = str(notice.get("kind", "info")).lower()
+        notice_message = str(notice.get("message", ""))
+        if notice_kind == "success":
+            st.success(notice_message)
+        elif notice_kind == "warning":
+            st.warning(notice_message)
+        elif notice_kind == "error":
+            st.error(notice_message)
+        else:
+            st.info(notice_message)
+        if notice.get("details"):
+            with st.expander("Показать лог запуска pipeline"):
+                st.code(str(notice["details"]))
+
+    if not status["is_fresh"]:
+        st.warning(
+            "Для новой темы ещё нет свежих артефактов. "
+            f"Сейчас на диске данные для темы: **{status['artifact_topic'] or 'неизвестно'}**."
+        )
+        st.info(
+            "После смены темы pipeline должен быть прогнан заново, "
+            "чтобы обновились тексты, review queue, аналитика и чат."
+        )
+        action_col1, action_col2 = st.columns([1, 1])
+        if action_col1.button(
+            "▶ Запустить pipeline для этой темы",
+            type="primary",
+            key="run_pipeline_from_onboarding",
+        ):
+            run_pipeline_for_current_topic()
+            return
+        with action_col2:
+            st.code("python pipeline/run_pipeline.py")
+        if st.session_state.get("auto_run_pipeline_pending", False):
+            st.info("Тема изменена — автоматически запускаю pipeline. Это может занять несколько минут.")
+            run_pipeline_for_current_topic()
+            return
 
     if st.session_state.get("topic") and not st.session_state.get("editing_topic", False):
         st.subheader("Текущая конфигурация домена")
