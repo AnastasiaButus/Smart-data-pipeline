@@ -115,6 +115,8 @@ Streamlit is the UI layer for HITL review, analytics, reporting, and chat with p
 - **DataQualityAgent** — автоматическая чистка: HTML-артефакты, дубликаты, fuzzy matching и фильтрация коротких текстов
 - **AnnotationAgent** — zero-shot авторазметка (`facebook/bart-large-mnli`) + confidence scoring + review queue
 - **ActiveLearningAgent** — стратегии `entropy`, `margin`, `random` + learning curve и сравнение стратегий
+![AL Strategy Comparison](docs/screenshots/al_strategy_comparison.png)
+*Сравнение стратегий: margin > entropy > random*
 - **ModelWrapper** — sklearn harness для `fit/predict/evaluate/explain/save/load`
 
 ### 🔍 Smart deduplication
