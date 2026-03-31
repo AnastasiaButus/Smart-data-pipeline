@@ -95,7 +95,7 @@ def init_state() -> None:
         if str(item).strip()
     ]
 
-    st.session_state.setdefault("topic", topic)
+    st.session_state.setdefault("user_topic", topic)
     st.session_state.setdefault("editing_topic", not bool(topic))
     st.session_state.setdefault("current_classes", classes)
     st.session_state.setdefault(
@@ -284,7 +284,7 @@ def get_topic_emoji(topic: str) -> str:
 def update_classes_with_llm(llm_client: GeminiLLMClient) -> None:
     """Refresh recommended classes from the current dataset summary."""
     dataset_df = get_best_dataset()
-    topic = st.session_state.get("topic", "")
+    topic = st.session_state.get("user_topic", "")
     current_classes = [
         label
         for label in st.session_state.get("current_classes", [])
@@ -411,12 +411,18 @@ def render_sidebar(llm_client: GeminiLLMClient) -> float:
     cfg = load_config()
     st.sidebar.header("⚙️ Pipeline Settings")
 
-    topic_value = st.sidebar.text_input(
+    current_topic = st.session_state.get(
+        "user_topic",
+        cfg.get("domain", {}).get("topic", "sailing and yacht navigation"),
+    )
+    topic_input = st.sidebar.text_input(
         "Тема классификации",
-        value=st.session_state.get("topic", ""),
+        value=current_topic,
         key="sidebar_topic",
     )
-    st.session_state["topic"] = topic_value.strip()
+    if topic_input != current_topic:
+        st.session_state["user_topic"] = topic_input
+        st.rerun()
 
     if st.sidebar.button("🔄 Обновить классы через LLM", use_container_width=True):
         with st.spinner("Gemini уточняет тему и классы..."):
@@ -1010,7 +1016,7 @@ def answer_with_llm(question: str, llm_client: GeminiLLMClient) -> str:
         path=str(ROOT / "reports" / "context_memory.json")
     ).get_summary_for_llm()
     compact_metrics = {
-        "topic": st.session_state.get("topic", report_data.get("topic", "")),
+        "topic": st.session_state.get("user_topic", report_data.get("topic", "")),
         "rows": report_data.get("annotated_rows", 0) or report_data.get("total_rows", 0),
         "classes": st.session_state.get("current_classes", []),
         "review_queue": report_data.get("review_queue_rows", 0),
@@ -1043,7 +1049,7 @@ def render_chat_tab(llm_client: GeminiLLMClient) -> None:
     """Render the dashboard chat tab."""
     st.subheader("💬 Обсудить данные с Gemini")
     report_data = collect_report_data()
-    topic = st.session_state.get("topic", report_data.get("topic", "не задана"))
+    topic = st.session_state.get("user_topic", report_data.get("topic", "не задана"))
     row_count = report_data.get("annotated_rows", 0) or report_data.get("total_rows", 0)
     classes = st.session_state.get("current_classes", report_data.get("classes", []))
     st.info(f"Контекст: {topic}, {row_count} строк, классы: {', '.join(classes)}")
@@ -1069,11 +1075,17 @@ def render_chat_tab(llm_client: GeminiLLMClient) -> None:
 
 def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
     """Render onboarding flow for topic and source discovery."""
-    st.title("⛵ Smart Data Pipeline")
+    cfg = load_config()
+    topic = st.session_state.get(
+        "user_topic",
+        cfg.get("domain", {}).get("topic", "sailing and yacht navigation"),
+    )
+    topic_emoji = get_topic_emoji(topic)
+    st.title(f"{topic_emoji} Smart Data Pipeline")
 
-    if st.session_state.get("topic") and not st.session_state.get("editing_topic", False):
+    if st.session_state.get("user_topic") and not st.session_state.get("editing_topic", False):
         st.subheader("Текущая конфигурация домена")
-        st.write(f"**Тема:** {st.session_state.get('topic')}")
+        st.write(f"**Тема:** {st.session_state.get('user_topic')}")
         st.write("**Классы:** " + ", ".join(st.session_state.get("current_classes", [])))
         if st.button("Изменить тему", key="change_topic_button"):
             st.session_state["editing_topic"] = True
@@ -1436,11 +1448,17 @@ def build_sources_detail(sources_data: list[Any]) -> dict[str, Any]:
 
 def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
     """Render onboarding flow for topic and source discovery."""
-    st.title("⛵ Smart Data Pipeline")
+    cfg = load_config()
+    topic = st.session_state.get(
+        "user_topic",
+        cfg.get("domain", {}).get("topic", "sailing and yacht navigation"),
+    )
+    topic_emoji = get_topic_emoji(topic)
+    st.title(f"{topic_emoji} Smart Data Pipeline")
 
-    if st.session_state.get("topic") and not st.session_state.get("editing_topic", False):
+    if st.session_state.get("user_topic") and not st.session_state.get("editing_topic", False):
         st.subheader("Текущая конфигурация домена")
-        st.write(f"**Тема:** {st.session_state.get('topic')}")
+        st.write(f"**Тема:** {st.session_state.get('user_topic')}")
         st.write("**Классы:** " + ", ".join(st.session_state.get("current_classes", [])))
         if st.button("Изменить тему", key="change_topic_button"):
             st.session_state["editing_topic"] = True
@@ -1753,18 +1771,23 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
         return
 
     st.subheader("Введите тему для классификации текстов")
-    topic = st.text_input(
+    user_topic = st.text_input(
         "Тема пользователя",
-        value=st.session_state.get("topic", ""),
-        key="onboarding_topic_input",
+        value=st.session_state.get(
+            "user_topic",
+            cfg.get("domain", {}).get("topic", "sailing and yacht navigation"),
+        ),
+        key="onboarding_topic",
     ).strip()
-    if topic:
-        st.session_state["topic"] = topic
+    if user_topic != st.session_state.get("user_topic"):
+        st.session_state["user_topic"] = user_topic
+        st.rerun()
 
     if "selected_items" not in st.session_state:
         st.session_state["selected_items"] = {}
 
     if st.button("🔍 Найти источники данных", key="find_sources_button"):
+        topic = st.session_state.get("user_topic", "")
         with st.spinner("Gemini ищет источники..."):
             suggestion_payload = find_sources_with_llm(topic, llm_client)
         st.session_state["source_suggestions"] = suggestion_payload.get("sources", [])
