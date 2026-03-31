@@ -1256,11 +1256,9 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
         value=topic,
         key="topic_input",
     ).strip()
-    if user_topic and user_topic != topic:
-        st.session_state["topic"] = user_topic
+    if user_topic != topic:
         st.session_state["current_topic"] = user_topic
-        st.rerun()
-    elif user_topic:
+    if user_topic:
         st.session_state["topic"] = user_topic
 
     if "selected_items" not in st.session_state:
