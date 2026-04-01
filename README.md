@@ -473,7 +473,6 @@ pytest tests\test_eda_export.py -v          # экспорт EDA
 - `sailingforums` сильно проседает после чистки (20 → 5 строк)
 
 **Что сделала бы иначе**
-- Начала бы с более тематических датасетов HuggingFace вместо `emotion`/`tweets`
 - Добавила бы аугментацию для малых классов
 - Реализовала бы fine-tune DistilBERT как следующий baseline upgrade
 
