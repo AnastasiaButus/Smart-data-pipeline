@@ -1,891 +1,489 @@
-# Smart Data Pipeline
+# 🧠 Smart Data Pipeline
 
-![Python](https://img.shields.io/badge/python-3.12-blue)
-![UI](https://img.shields.io/badge/UI-Streamlit-red)
-![Orchestrator](https://img.shields.io/badge/orchestrator-Prefect-1f6feb)
+![Tests](https://img.shields.io/badge/тестов-113%20passed-brightgreen)
+![Streamlit](https://img.shields.io/badge/UI-Streamlit-red)
+![HITL](https://img.shields.io/badge/HITL-включён-blue)
 ![LLM](https://img.shields.io/badge/LLM-Gemini-orange)
-![Model](https://img.shields.io/badge/model-TF--IDF%20%2B%20LogReg-brightgreen)
-![Mode](https://img.shields.io/badge/HITL-enabled-success)
+![Prefect](https://img.shields.io/badge/оркестрация-Prefect-purple)
+![Python](https://img.shields.io/badge/python-3.12-blue)
 
-> End-to-end pipeline for topic-driven text classification: from topic selection and data collection to zero-shot labeling, HITL review, retraining, analytics, HTML reports, and research notebooks.
+**End-to-end ML пайплайн для тематической классификации текстов.**  
+Смените тему в интерфейсе — и система перестроит классы, данные, разметку, HITL-очередь, модель и аналитику под новый домен. Без хардкода тем, без ручной перенастройки.
 
-## What This Project Does
+---
 
-`Smart Data Pipeline` is a flexible text-classification system with a friendly Streamlit dashboard and a full backend pipeline.
+## 📋 Содержание
 
-The key idea is simple:
+- [Главная идея](#главная-идея)
+- [Решаемая задача](#решаемая-задача)
+- [Быстрый старт](#быстрый-старт)
+- [Переменные окружения](#переменные-окружения)
+- [Пользовательский путь](#пользовательский-путь)
+- [Архитектура](#архитектура)
+- [Возможности](#возможности)
+- [Источники данных](#источники-данных)
+- [Data Card](#data-card)
+- [Структура проекта](#структура-проекта)
+- [Запуск тестов](#запуск-тестов)
+- [Отчёты](#отчёты)
+- [Известные ограничения](#известные-ограничения)
+- [Ретроспектива](#ретроспектива)
+- [Roadmap](#roadmap)
 
-1. The user sets a topic.
-2. The pipeline rebuilds data and labels for that topic.
-3. Low-confidence examples go to a Human-in-the-Loop queue.
-4. After manual fixes, the model is retrained.
-5. The user gets metrics, analytics, HTML reports, and optional Jupyter notebooks.
+---
 
-This is not just a notebook or a single classifier. It is a coordinated system with:
+## Главная идея
 
-- a topic-aware onboarding flow
-- multi-source text collection
-- automatic data cleaning
-- fuzzy duplicate detection
-- zero-shot annotation
-- HITL review queue
-- active learning experiments
-- retraining and final metrics
-- interactive analytics and exportable reports
+> *«Не статичный классификатор под одну тему — перенастраиваемый smart data pipeline.*  
+> *Пользователь вводит новую тему, и система перестраивает классы, данные, разметку, HITL-очередь, аналитику и отчёты под новый домен.»*
 
-## Interface Preview
+---
 
-All screenshots below use the default demo topic:
+## Решаемая задача
 
-- `sailing and yacht navigation`
+**Демо-тема по умолчанию:** `sailing and yacht navigation`
 
-### Topic change dialog
-![Topic dialog](docs/screenshots/topic_dialog_modal.png)
+На вход поступают тексты из разнородных источников: RSS-ленты яхтенных журналов, вопросы с StackExchange, темы с форумов яхтсменов, датасеты HuggingFace. Все тексты — только текстовая модальность (изображения, аудио, видео не поддерживаются; мультимодальность запланирована в roadmap).
 
-### Friendly sidebar with topic, classes, threshold, and progress
-![Sidebar UI](docs/screenshots/ui_sidebar.png)
+**Задача** — автоматически разложить входящий поток по тематическим классам:
 
-### HITL review
-![HITL UI](docs/screenshots/ui_hitl.png)
+| Класс | Что попадает |
+|---|---|
+| `navigation` | Маршруты, карты, GPS, лоция |
+| `safety` | Безопасность, снаряжение, спасение |
+| `equipment` | Паруса, такелаж, оборудование лодки |
+| `weather` | Погода, ветер, состояние моря |
+| `licensing` | Сертификаты, обучение, правила |
+| `other_or_offtopic` | Нетематические тексты и шум |
 
-### Chat with project-aware context
-![Chat UI](docs/screenshots/ui_chat.png)
+**Кому это нужно:** редактор яхтенного медиа, аналитик яхт-клуба или парусной школы, data analyst, которому нужно триажировать входящий текстовый поток по морским темам.
 
-### Interactive EDA report example
-![EDA Quality](docs/screenshots/eda_quality.png)
+**Почему не просто классификатор:** тема — лишь пример. Пользователь может сменить домен на `fitness`, `medical diagnosis` или любой другой — и система пересоберёт весь пайплайн под новую предметную область.
 
-### Active Learning comparison
-![AL Strategy Comparison](docs/screenshots/al_strategy_comparison.png)
+> **💡 Совет:** вводите тему и классы на английском.  
+> `facebook/bart-large-mnli` обучена на английском — английские метки дают более высокий `confidence score`.  
+> Русские метки сработают, но могут снизить точность классификации.
 
-## Default Demo Scenario: Sailing and Yacht Navigation
+---
 
-The repository is especially comfortable to demo on the default yachting domain:
+## Быстрый старт
 
-- topic: `sailing and yacht navigation`
-- default classes:
-  - `navigation`
-  - `safety`
-  - `equipment`
-  - `weather`
-  - `licensing`
-- typical source mix:
-  - HuggingFace datasets
-  - StackExchange Sailing
-  - RSS feeds from sailing media
-  - forum data
-
-This is useful for demos, videos, and screenshots because:
-
-- the pipeline already has real topic-specific collectors for sailing
-- the screenshots look coherent and domain-specific
-- the user can still switch to another domain and rebuild the whole flow
-
-## Why It Is Strong
-
-- **Topic-first workflow**: the project is not hardcoded to a single domain.
-- **Flexible user path**: topic, classes, confidence threshold, sources, report sections, and export format are configurable.
-- **HITL is real, not decorative**: manual corrections are saved and fed back into retraining.
-- **Graceful degradation**: if Gemini quota is exhausted, the core pipeline still works with fallbacks.
-- **Notebook layer included**: Jupyter notebooks are available as a research companion, but the main workflow already works in the dashboard.
-- **Artifacts are materialized on disk**: raw, clean, annotated, queue, model, metrics, and reports are all persisted.
-- **User-friendly UI**: modal topic editing, gated onboarding, checkbox-based source selection, report builder, notebook commands, and explicit stale-data warnings reduce user confusion.
-- **API-token aware design**: Gemini is used for high-value intelligence tasks, while core collection/cleaning/annotation/retraining remain available without it.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    U["User / Streamlit UI"] --> T["Topic + classes + selected sources"]
-    T --> P["Prefect pipeline"]
-
-    P --> C["DataCollectionAgent"]
-    C --> R1["data/raw/dataset.parquet"]
-
-    R1 --> Q["DataQualityAgent"]
-    Q --> R2["data/raw/dataset_clean.parquet"]
-
-    R2 --> A["AnnotationAgent<br/>facebook/bart-large-mnli"]
-    A --> R3["data/labeled/annotated.parquet"]
-    A --> R4["data/review_queue.csv"]
-
-    R4 --> H["HITL review in Streamlit"]
-    H --> AL["ActiveLearningAgent"]
-    H --> M["ModelWrapper<br/>TF-IDF + LogisticRegression"]
-    AL --> M
-
-    M --> R5["models/classifier.pkl"]
-    M --> R6["reports/model_metrics.json"]
-
-    R1 --> E["EDA export + report builder"]
-    R2 --> E
-    R3 --> E
-    R4 --> E
-
-    E --> O["HTML / Markdown / Telegram report"]
-    E --> N["Jupyter notebooks"]
-    E --> D["Analytics tab"]
-
-    L["GeminiLLMClient"] --> T
-    L --> D
-    L --> O
-    L --> X["Chat tab"]
-
-    K["ContextMemory"] --> L
-    P --> K
-```
-
-## User Journey
-
-```mermaid
-flowchart TD
-    A["Open dashboard"] --> B["Set or change topic"]
-    B --> C["Review and confirm classes"]
-    C --> D["Find, select, and confirm candidate sources"]
-    D --> E["Run pipeline for current topic"]
-    E --> F["Collect + clean + annotate data"]
-    F --> G["Create review_queue.csv"]
-    G --> H["Review low-confidence samples in HITL"]
-    H --> I["Save manual corrections"]
-    I --> J["Retrain model"]
-    J --> K["View metrics and F1 per class"]
-    K --> L["Open analytics / export HTML report / use notebooks / chat with LLM"]
-```
-
-## Technology Stack
-
-| Layer | Technologies | What it does |
-|---|---|---|
-| UI | `Streamlit`, `Plotly` | onboarding, HITL, analytics, report builder, chat |
-| Orchestration | `Prefect` | one-command end-to-end pipeline |
-| Data collection | `datasets`, `requests`, `BeautifulSoup4`, `feedparser`, `kaggle` | HuggingFace, RSS, forums, StackExchange, optional Kaggle |
-| Data cleaning | `pandas`, `rapidfuzz` | HTML cleanup, exact dedup, fuzzy dedup, length filtering |
-| Annotation | `transformers`, `torch` | zero-shot labeling with `facebook/bart-large-mnli` |
-| Active Learning | `scikit-learn`, `Plotly` | `entropy`, `margin`, `random` strategies and comparison |
-| Model | `scikit-learn`, `joblib` | TF-IDF + LogisticRegression baseline |
-| LLM layer | `google-genai` | topic reformulation, class refresh, source suggestions, EDA hypotheses, chat |
-| Reports | HTML / Markdown / Telegram | downloadable report generation |
-| Research layer | `Jupyter`, `wordcloud`, `Plotly` | EDA notebook and AL experiment notebook |
-
-## Project Structure
-
-```text
-smart-data-pipeline/
-+-- agents/
-|   +-- data_collection_agent.py   # multi-source collection + topic bootstrap
-|   +-- data_quality_agent.py      # cleanup, quality report, fuzzy dedup
-|   +-- annotation_agent.py        # zero-shot labeling + review queue + kappa
-|   `-- al_agent.py                # active learning cycles and strategy comparison
-+-- core/
-|   +-- llm_client.py              # Gemini wrapper with fallbacks
-|   +-- model_wrapper.py           # TF-IDF + LogisticRegression model harness
-|   `-- context_memory.py          # persistent step-by-step context memory
-+-- pipeline/
-|   `-- run_pipeline.py            # Prefect flow orchestration
-+-- ui/
-|   +-- app.py                     # main Streamlit dashboard
-|   `-- report_generator.py        # HTML / Markdown / Telegram export helpers
-+-- notebooks/
-|   +-- eda.ipynb                  # research EDA notebook
-|   +-- al_experiment.ipynb        # active learning comparison notebook
-|   `-- export_eda.py              # standalone HTML EDA export
-+-- data/
-|   +-- raw/
-|   |   +-- dataset.parquet
-|   |   `-- dataset_clean.parquet
-|   +-- labeled/
-|   |   `-- annotated.parquet
-|   `-- review_queue.csv
-+-- models/
-|   +-- classifier.pkl
-|   `-- label_encoder.pkl
-+-- reports/
-|   +-- eda_report.html
-|   +-- model_metrics.json
-|   +-- quality_report.md
-|   +-- annotation_spec.md
-|   +-- context_memory.json
-|   `-- ...
-+-- docs/
-|   `-- screenshots/
-+-- tests/
-`-- config.yaml
-```
-
-## Installation
-
-### 1. Clone the repository
-
-```powershell
+```bash
 git clone https://github.com/AnastasiaButus/Smart-data-pipeline.git
 cd smart-data-pipeline
-```
-
-### 2. Create and activate a virtual environment
-
-```powershell
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-```
-
-### 3. Install dependencies
-
-```powershell
+.venv\Scripts\activate          # Windows PowerShell
 pip install -r requirements.txt
-```
+cp .env.example .env            # добавить GEMINI_API_KEY в .env
 
-### 4. Create `.env`
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Then open `.env` and fill the values you need.
-
-## API Keys and Where to Put Them
-
-All environment variables go into:
-
-- `.env`
-
-### Minimum setup
-
-```env
-GEMINI_API_KEY=your_real_key_here
-```
-
-### Full `.env` example
-
-```env
-GEMINI_API_KEY=your_real_key_here
-KAGGLE_API_TOKEN=your_kaggle_api_token
-REDDIT_CLIENT_ID=your_reddit_client_id
-REDDIT_CLIENT_SECRET=your_reddit_client_secret
-REDDIT_USER_AGENT=smart-data-pipeline/0.1
-TELEGRAM_BOT_TOKEN=optional_for_report_export
-```
-
-### What each key is used for
-
-| Variable | Required | Used for | Where to get it |
-|---|---|---|---|
-| `GEMINI_API_KEY` | recommended | LLM class refresh, source suggestions, EDA hypotheses, chat | Google AI Studio |
-| `KAGGLE_API_TOKEN` | optional | Kaggle collector, only if Kaggle is enabled in config | Kaggle account |
-| `TELEGRAM_BOT_TOKEN` | optional | sending report to Telegram from the dashboard | BotFather |
-| `REDDIT_*` | reserved | placeholders for future extensions, not required for current run | optional |
-
-### Important tip
-
-If you replace the Gemini key while Streamlit is already running, **restart Streamlit** so the cached LLM client picks up the new key.
-
-## LLM Usage, Token Economy, and Resilience
-
-The project is designed to use Gemini **selectively**, not wastefully.
-
-### Where Gemini is used
-
-Gemini is used for high-value tasks such as:
-
-- class refresh in the sidebar
-- source suggestions during onboarding
-- EDA hypotheses and stopword support
-- chat answers in the dashboard
-- domain reformulation and compact report enrichments
-
-### Where Gemini is *not* required
-
-The following parts remain usable without Gemini:
-
-- most of the core data collection flow
-- data cleaning
-- exact and fuzzy deduplication
-- zero-shot annotation with `facebook/bart-large-mnli`
-- HITL queue review
-- retraining
-- final metrics
-
-### How the project saves API tokens
-
-- the Gemini client is cached in the dashboard with `@st.cache_resource`
-- common topic emoji are resolved locally first
-- topic-aware fallback classes are generated locally
-- source suggestions can fall back to heuristics
-- the pipeline is no longer auto-run immediately after topic change
-- the user confirms classes and sources first, so unnecessary LLM-heavy reruns are avoided
-
-### What happens if Gemini quota is exhausted
-
-If the UI or logs show `429 RESOURCE_EXHAUSTED`:
-
-- the application does not become useless
-- class refresh can degrade to topic-aware fallback classes
-- source suggestions can degrade to heuristic suggestions
-- chat can use fallback answers
-- the main pipeline still remains usable
-
-This is one of the important architectural strengths of the project: the LLM layer improves the experience, but does not own the whole system.
-
-## Quick Start
-
-### Run the full pipeline
-
-```powershell
+# Запустить весь пайплайн одной командой:
 python pipeline/run_pipeline.py
+
+# Или запустить дашборд:
+streamlit run ui/app.py         # → http://localhost:8501
 ```
 
-### Run the dashboard
+> **Первый запуск:** `facebook/bart-large-mnli` (~1.6 ГБ) скачивается автоматически. Нужен интернет.
 
-```powershell
-streamlit run ui/app.py
+> **Место на диске:** полная установка занимает ~3.5 ГБ (`.venv` ~2 ГБ + кэш модели ~1.6 ГБ).
+
+---
+
+## Переменные окружения
+
+Создайте `.env` на основе `.env.example`:
+
+| Переменная | Обязательность | Назначение |
+|---|---|---|
+| `GEMINI_API_KEY` | ✅ Рекомендуется | LLM-функции: подбор классов, EDA-гипотезы, объяснения качества данных, чат. Без ключа core pipeline работает через fallback. |
+| `KAGGLE_API_TOKEN` | ⚙️ Опционально | Kaggle-датасеты. Включить в `config.yaml`: `sources.kaggle.enabled: true` |
+| `TELEGRAM_BOT_TOKEN` | ⚙️ Опционально | Отправка отчётов через Telegram из UI |
+
+> Переменные `REDDIT_*` есть в `.env.example` как плейсхолдеры, но **runtime-кодом не читаются**.  
+> `TELEGRAM_CHAT_ID` вводится через UI, не через `.env`.
+
+---
+
+## Пользовательский путь
+
+Полный маршрут от настройки темы до обученной модели — всё внутри Streamlit-дашборда.
+
+---
+
+### Шаг 1 — Настройка темы и классов
+
+Открыть дашборд → проверить или сменить тему в сайдбаре → подтвердить классы (или обновить через LLM).
+
+![Онбординг — обзор](docs/screenshots/onboarding_overview.png)
+
+*Сайдбар: текущая тема, редактируемый список классов, порог уверенности, прогресс пайплайна. Главная панель ведёт по 3 шагам онбординга.*
+
+---
+
+### Шаг 2 — Выбор источников данных
+
+Нажать **🔍 Найти источники данных** → раскрыть группы источников → отметить нужные → подтвердить выбор.
+
+![Выбор источников](docs/screenshots/onboarding_sources.png)
+
+*Источники сгруппированы по типу и лицензии. Счётчик показывает число выбранных источников и ожидаемый объём строк. Прогресс-трекер слева отражает подтверждённые шаги.*
+
+---
+
+### Шаг 3 — Запуск пайплайна
+
+Нажать **▶ Обновить данные для этой темы** — Prefect последовательно запускает 4 агента:  
+`DataCollection → DataQuality → Annotation → ActiveLearning → ModelTraining`
+
+Артефакты сохраняются в `data/` и `reports/` после каждого прогона.
+
+---
+
+### Шаг 4 — HITL-проверка и переобучение
+
+Перейти на вкладку **🔍 Проверка меток (HITL ★)** → просмотреть примеры с низкой уверенностью → принять или исправить метку → нажать **🔄 Запустить переобучение**.
+
+После переобучения выводятся метрики и F1 по каждому классу.
+
+| Метрика | Baseline | После HITL |
+|---|---|---|
+| Accuracy | 0.50 | 0.64 |
+| F1 macro | 0.43 | 0.55 |
+| Cohen's κ | — | 1.0 |
+| N train | 166 | 196 |
+
+---
+
+### Шаг 5 — Аналитика
+
+Перейти на вкладку **📊 Аналитика** → смотреть распределение меток, гистограмму уверенности, WordCloud, LLM-гипотезы.
+
+![Аналитика](docs/screenshots/analytics.png)
+
+*Распределение меток + гистограмма confidence с маркером порога. Визуальный срез того, в чём модель неуверена.*
+
+---
+
+### Шаг 6 — EDA-отчёт (HTML)
+
+EDA-отчёт генерируется как автономный интерактивный HTML с 8 Plotly-графиками, сворачиваемыми секциями и LLM-гипотезами.
+
+![EDA-отчёт](docs/screenshots/eda_report.png)
+
+*Разделы: Dataset overview · Text length · WordCloud · Data quality preview · Top words by source · LLM hypotheses*
+
+---
+
+### Шаг 7 — WordCloud
+
+![WordCloud](docs/screenshots/wordcloud.png)
+
+*Тематическое облако слов с фильтрацией HTML-артефактов. Позволяет быстро проверить, что словарь соответствует целевой теме.*
+
+---
+
+### Шаг 8 — Чат с LLM
+
+Перейти на вкладку **💬 Чат с LLM** → задать вопросы о текущих данных, гипотезах или рекомендациях по пайплайну.
+
+![Чат с LLM](docs/screenshots/llm_chat.png)
+
+*Gemini знает контекст: текущую тему, количество строк, список классов и артефакты пайплайна. Кнопки быстрых вопросов для частых сценариев.*
+
+---
+
+## Архитектура
+
+Проект построен на **4 агентах**, оркестрируемых Prefect:
+
+```
+Пользователь (Streamlit UI)
+        │
+        ▼
+┌─────────────────────────────────────────────┐
+│              Prefect Pipeline               │
+│                                             │
+│  DataCollectionAgent                        │
+│    → HuggingFace, StackExchange, RSS,       │
+│      форумы, Kaggle (опционально)           │
+│    → проверка robots.txt, fuzzy dedup       │
+│                  ↓                          │
+│  DataQualityAgent                           │
+│    → очистка HTML, дедупликация,            │
+│      fuzzy matching, LLM-советы             │
+│                  ↓                          │
+│  AnnotationAgent                            │
+│    → zero-shot (bart-large-mnli)            │
+│    → confidence scoring → review_queue.csv  │
+│                  ↓                          │
+│  ActiveLearningAgent                        │
+│    → стратегии entropy / margin / random    │
+│    → learning curve, сравнение стратегий    │
+│                  ↓                          │
+│  ModelWrapper (TF-IDF + LogReg)             │
+│    → fit / predict / evaluate / save        │
+└─────────────────────────────────────────────┘
+        │
+        ▼
+  ContextMemory (reports/context_memory.json)
+  — сохраняется между запусками, общий для всех агентов
 ```
 
-### Run tests
+**LLM-слой (Gemini)** отделён от core pipeline:
+- Domain reformulation → ML-постановка с классами и ключевыми словами
+- Объяснения проблем качества и рекомендации по чистке
+- Генерация EDA-гипотез
+- Чат с контекстом пайплайна
+- Fallback chain: `gemini-2.5-flash → gemini-flash-latest → gemma`
 
-```powershell
-pytest tests -v --tb=short
+---
+
+## Возможности
+
+### 🤖 Мультиагентный пайплайн
+- **DataCollectionAgent** — HuggingFace datasets, Kaggle API, StackExchange API, RSS-ленты, форумы яхтсменов
+- **DataQualityAgent** — удаление HTML-артефактов, точная и нечёткая дедупликация, фильтрация коротких текстов, LLM-советы по качеству
+- **AnnotationAgent** — zero-shot классификация (bart-large-mnli), confidence scoring, формирование review queue, экспорт в LabelStudio
+- **ActiveLearningAgent** — стратегии entropy / margin / random, learning curve, сравнение стратегий
+
+**Сравнение AL-стратегий:** `margin (0.62) > entropy (0.41) > random (0.13)` при N=110
+
+### 🔍 Умная дедупликация
+- Точная дедупликация по нормализованному тексту
+- Нечёткое совпадение через `rapidfuzz` — находит почти-дубликаты с >90% сходством
+- Ловит варианты вроде `Sailing in bad weather` vs `Sailing in bad weather!`, которые точное совпадение пропускает
+
+### 🧪 Классификационная модель (TF-IDF + LogReg)
+
+Реализована в `core/model_wrapper.py` как sklearn pipeline:
+
+```python
+Pipeline([
+    ("tfidf", TfidfVectorizer(max_features=10000, ngram_range=(1, 2), sublinear_tf=True)),
+    ("clf",   LogisticRegression(max_iter=1000, class_weight="balanced", C=1.0))
+])
 ```
 
-## How the Topic Logic Works
-
-The system is built around a **topic-first** workflow.
-
-When the user changes the topic in the UI:
-
-1. the selected topic is stored in `session_state` and `config.yaml`
-2. topic-aware fallback classes are generated immediately
-3. the user reviews and explicitly confirms the current classes
-4. the user finds, selects, and explicitly confirms the data sources
-5. stale artifacts are detected and clearly marked
-6. only then is the pipeline unlocked for the new topic
-7. analytics, HITL, report builder, and chat switch to the new topic only after fresh artifacts are ready
-
-This order is intentional. The dashboard does **not** auto-run the pipeline immediately after a topic change anymore. The run button is enabled only after:
-
-- class confirmation
-- source confirmation
-
-This prevents an inconsistent UX where a new topic could start processing before the user had approved the domain setup.
-
-For best results:
-
-- enter the topic in **English**
-- keep class labels in **English**
-
-This matters because the zero-shot model is:
-
-- `facebook/bart-large-mnli`
-
-and it works best with English labels.
-
-## Data Collection Logic
-
-### Implemented collectors
-
-The project already implements these collectors:
-
-- HuggingFace datasets
-- RSS feeds
-- forum scraping
-- StackExchange public API
-- optional Kaggle import
-
-### Domain behavior
-
-The collection behavior depends on the topic:
-
-- **Sailing / yachting topics**
-  - HuggingFace
-  - RSS
-  - forums
-  - StackExchange
-- **Non-sailing topics**
-  - topic-aware bootstrap corpus
-  - optional topic-specific HuggingFace datasets if configured
-  - sailing-specific RSS/forum/StackExchange sources are skipped
-
-This is why the project can still demonstrate a full end-to-end flow for a brand-new topic even when real external sources are not yet configured for that domain.
-
-### Ethical scraping
-
-The scraping layer follows several safety rules:
-
-- `robots.txt` checks before scraping
-- rate limiting with delays between requests
-- honest user-agent string
-- graceful failure on blocked or unavailable sources
-
-### Scraping implementation notes
-
-The current collectors combine:
-
-- official APIs where possible
-- RSS parsing via `feedparser`
-- HTML/forum scraping via `requests + BeautifulSoup4`
-- a generic scrape dispatcher for known URL families
-
-The generic dispatcher currently routes known sources such as:
-
-- `cruisersforum.com`
-- `sailingforums.com`
-- `stackexchange.com`
-
-### Hidden API / site-specific adapter note
-
-The project also has a prepared extension path for more advanced scraping strategies:
-
-- site-specific dispatch in `DataCollectionAgent.scrape()`
-- dedicated adapters for known domains
-- room to extend the scraper toward hidden/internal JSON endpoints when needed
-
-So the project already supports a practical scraping architecture, while the truly domain-specific "hidden API" layer is still an extension point rather than a universal finished collector.
-
-### Kaggle note
-
-Kaggle is currently present in the UI and backend, but the default configured Kaggle datasets are **not text datasets**.  
-Because of that, Kaggle is intentionally shown as disabled until suitable text datasets are configured.
-
-## Data Cleaning Logic
-
-The cleaning layer is implemented in `DataQualityAgent`.
-
-It can:
-
-- decode HTML entities
-- remove HTML / WordPress-style artifacts
-- drop missing values
-- remove exact duplicates by normalized text
-- remove **fuzzy duplicates** with `rapidfuzz`
-- filter short texts
-- truncate overlong texts
-- compare before/after quality metrics
-- generate quality advice and a Markdown quality report
-
-### Fuzzy duplicate logic
-
-This is one of the useful practical features of the project.
-
-Exact deduplication catches only identical strings.  
-Fuzzy duplicate detection additionally catches near-duplicates, for example:
-
-- same sentence with slightly different punctuation
-- title variants with extra boilerplate
-- templated copies with small wording changes
-
-The default threshold is configured in `config.yaml`:
-
-- `quality.fuzzy_threshold: 90.0`
-
-## Annotation and HITL
-
-`AnnotationAgent` performs:
-
-- zero-shot labeling with `facebook/bart-large-mnli`
-- confidence scoring
-- confidence-threshold routing
-- automatic split into:
-  - confident labeled data
-  - low-confidence review queue
-
-Low-confidence examples are written to:
-
-- `data/review_queue.csv`
-
-The dashboard allows the user to:
-
-- inspect low-confidence texts
-- accept the suggested label
-- correct the label manually
-- save manual corrections
-- retrain the model from corrected data
-
-### Confidence threshold
-
-The confidence threshold is exposed directly in the sidebar:
-
-- the user can move it without editing code
-- the UI estimates how many examples will go to review
-- the analytics tab shows the confidence distribution with the chosen threshold
-
-This makes the trade-off between automation and manual review transparent to the user.
-
-### Agreement metric
-
-The project also computes **Cohen's kappa** between:
-
-- auto-labels
-- HITL corrections
-
-This is a strong quality signal because it shows not only model output, but also how well automatic annotation agrees with human review.
-
-## Active Learning and Model Training
-
-### Active Learning
-
-`ActiveLearningAgent` supports:
-
-- `entropy`
-- `margin`
-- `random`
-
-It can:
-
-- run iterative AL cycles
-- compare strategies
-- build learning curves
-- save strategy comparison reports
-
-### Final model
-
-The production baseline model is:
-
-- `TF-IDF + LogisticRegression`
-
-implemented in:
-
-- `core/model_wrapper.py`
-
-It supports:
-
-- `fit`
-- `predict`
-- `predict_proba`
-- `evaluate`
-- `explain`
-- `save`
-- `load`
-
-### Final metrics
-
-The final model metrics are saved to:
-
-- `reports/model_metrics.json`
-
-and are also shown directly in the dashboard after retraining:
-
-- Accuracy
-- F1 macro
-- N train
-- F1 per class
-
-### DistilBERT
-
-The project already includes a **DistilBERT upgrade stub** in `ModelWrapper`, but the current stable baseline is still the sklearn model.
-
-## Dashboard Features
-
-The Streamlit UI is intentionally not just a demo shell. It is the main user interface of the project.
-
-### Sidebar
-
-The sidebar contains:
-
-- current topic
-- editable class list
-- confidence threshold
-- scenario progress
-- skip toggles for HITL and Active Learning
-- topic-aware helper messages
-- LLM class refresh
-- manual class editing and reset to defaults
-
-### Onboarding tab
-
-The onboarding tab provides:
-
-- topic selection flow
-- topic-aware emoji in the main title
-- explicit class confirmation
-- source suggestions
-- checkbox-based source selection
-- explicit source confirmation
-- pipeline refresh for the new topic only after onboarding is confirmed
-- stale-data protection so old artifacts are not silently shown as if they belong to the new topic
-- a clearer user path:
-  - confirm classes
-  - confirm sources
-  - run pipeline
-  - move to HITL
-
-### HITL tab
-
-The HITL tab provides:
-
-- review queue filtering
-- approve / correct actions
-- queue export
-- retraining from corrected labels
-
-### Analytics tab
-
-The analytics tab provides:
-
-- label distribution
-- confidence distribution
-- source table
-- EDA report download
-- notebook launch commands
-- report builder
-- interactive HTML EDA integration
-- quality heatmap
-- wordcloud and source-level overview
-
-### Chat tab
-
-The chat tab provides:
-
-- context-aware chat with Gemini
-- quick prompts
-- fallback answers if LLM is unavailable
-
-Overall, the dashboard is designed to feel product-like rather than script-like:
-
-- the user can work without touching Python code
-- the UI explains stale-data situations instead of silently mixing domains
-- important actions are grouped into steps
-- export and notebook actions are available directly from the interface
-
-## Reports and Artifacts
-
-| Artifact | Purpose |
+- `class_weight="balanced"` — компенсирует дисбаланс классов (много `other_or_offtopic`)
+- `ngram_range=(1, 2)` — учитывает биграммы, важные для доменной лексики (`yacht club`, `safety gear`)
+- `sublinear_tf=True` — логарифмическое масштабирование TF, снижает вес частых слов
+- Стратифицированный split 80/20 (с fallback на обычный, если класс слишком мал)
+- Перед обучением: удаляются `unlabeled`, пустые тексты, классы с < 2 примерами
+- Сохранение: `models/classifier.pkl` + `models/label_encoder.pkl` через `joblib`
+- Дополнительно: `explain(texts)` возвращает топ-10 TF-IDF признаков по коэффициентам LogReg
+- DistilBERT: stub готов в `model_wrapper.py`, бросает `NotImplementedError` (в roadmap)
+
+### 💰 Экономия токенов Gemini
+
+Проект не отправляет сырые данные в LLM — только компактные сводки:
+
+| Место в коде | Лимит промпта |
 |---|---|
-| `data/raw/dataset.parquet` | merged raw dataset |
-| `data/raw/dataset_clean.parquet` | cleaned dataset |
-| `data/labeled/annotated.parquet` | annotated dataset |
-| `data/review_queue.csv` | low-confidence examples for HITL |
-| `models/classifier.pkl` | trained classifier |
-| `models/label_encoder.pkl` | label encoder |
-| `reports/model_metrics.json` | final model metrics |
-| `reports/quality_report.md` | quality before/after summary |
-| `reports/annotation_spec.md` | annotation instructions |
-| `reports/eda_report.html` | interactive standalone EDA report |
-| `reports/eda_hypotheses.json` | LLM hypotheses for the dataset |
-| `reports/context_memory.json` | step-by-step pipeline memory |
+| `generate()` — основной вызов | 800 символов |
+| `_build_prompt()` — domain spec | 800 символов |
+| `_build_eda_hypotheses_prompt()` | 600 символов |
+| `generate_stopwords()` | 600 символов |
+| `_compact_summary_json()` — сводка данных | 350 символов, только топ-источники и ключевые слова |
+| `get_summary_for_llm()` в ContextMemory | 500 символов, последние 3 шага пайплайна |
+| `answer_with_llm()` в UI (чат) | 800 символов |
+| `generate_spec()` в AnnotationAgent | 600 символов |
+| `explain_issues()` в DataQualityAgent | 800 символов |
 
-## Report Builder
+Отдельного persistent cache ответов Gemini нет — экономия достигается жёсткой обрезкой промптов на уровне клиента.
 
-The dashboard includes a report builder with checkbox-based section selection.
+### 🧠 LLM-функции (Gemini)
+- Domain reformulation: тема → ML-постановка с классами и ключевыми словами
+- Объяснение проблем качества данных и рекомендации по стратегии чистки
+- Генерация EDA-гипотез
+- Чат с контекстом пайплайна прямо в дашборде
+- Fallback chain — core pipeline не блокируется при недоступности LLM
 
-Supported export formats:
+### 👤 Human-in-the-Loop (HITL)
+- Примеры с `confidence < threshold` попадают в `review_queue.csv`
+- Streamlit-карточки: принять или исправить метку, фильтрация по классу и источнику
+- Сохранение правок и скачивание CSV
+- Переобучение на исправленных данных с live-метриками и F1 по классам
+- Cohen's κ = 1.0 на 30 проверенных примерах
 
-- HTML
-- Markdown
-- Telegram
+### 📊 Интерактивный EDA-отчёт
+- 8 интерактивных Plotly-графиков
+- WordCloud с фильтрацией HTML-артефактов
+- LLM-гипотезы
+- Сворачиваемые секции, экспорт в автономный HTML
 
-The user can choose which sections to include, for example:
+### ⚙️ Оркестрация
+- Prefect `@flow/@task` — весь пайплайн одной командой
+- Флаги `skip_hitl` и `skip_al` для пропуска тяжёлых шагов
+- `ContextMemory` — сохраняет результаты каждого агента на диск (`reports/context_memory.json`)
+- Graceful degradation — пайплайн не падает из-за недоступности внешних API
 
-- domain description
-- data sources
-- before/after cleaning
-- LLM hypotheses
-- HITL stats
-- model metrics
-- retrospective
+### 📋 Конструктор отчётов
+- Пользователь выбирает секции галочками
+- Форматы: HTML / Markdown / Telegram
+- Таблица источников с лицензиями и статусом скрапинга
+- Data Card с полными метриками проекта
 
-This means the exported report is not fixed.  
-The user can tailor the output to a stakeholder, a teacher, a reviewer, or a teammate.
+---
 
-### Why the report layer is strong
+## Источники данных
 
-- HTML report is interactive and portable
-- Markdown is convenient for repositories and documentation
-- Telegram export is useful for quick sharing
-- report sections are explicitly configurable in the UI
-- the same artifact set is reused across analytics, reports, and notebooks
+| Источник | Тип | Лицензия | Статус |
+|---|---|---|---|
+| HuggingFace (dair-ai/emotion) | датасет | Apache 2.0 | ✅ |
+| HuggingFace (mteb/tweet_sentiment_extraction) | датасет | MIT | ✅ |
+| Kaggle datasets | API | varies | ✅ |
+| StackExchange Sailing | API | CC BY-SA 4.0 | ✅ |
+| RSS-ленты (Yachting World, Cruising World, Sail Magazine, 48 North) | RSS | editorial | ⚠️ |
+| Форумы яхтсменов | веб-скрапинг | robots.txt проверен | ⚠️ |
 
-## Jupyter Notebooks
+**Этичный скрапинг:** проверка `robots.txt` перед каждым запросом · задержка `time.sleep(1)` · честный User-Agent · только образовательное/некоммерческое использование.
 
-The project also includes two notebooks:
+---
 
-- `notebooks/eda.ipynb`
-- `notebooks/al_experiment.ipynb`
+## Data Card
 
-They are an **additional research layer**, not the main product interface.
+| Параметр | Значение |
+|---|---|
+| Домен | Sailing & yacht navigation |
+| Язык | English |
+| Модальность | Только текст (мультимодальность в roadmap) |
+| Источников | 8 |
+| Строк собрано | 761 |
+| Строк после чистки | 609 |
+| Тематических строк | 220 (23.4%) |
+| Классов | 5 + other_or_offtopic |
+| Модель | sklearn TF-IDF + LogReg |
+| Accuracy | 0.50 → 0.64 (после HITL) |
+| F1 macro | 0.43 → 0.55 (после HITL) |
+| HITL проверено | 30 / 518 |
+| Тестов | 113 passed |
 
-### What each notebook is for
+### Классы
 
-- `eda.ipynb`
-  - deep-dive exploratory data analysis
-  - source distribution
-  - wordclouds
-  - quality views
-  - conclusions and recommendations
-- `al_experiment.ipynb`
-  - comparison of Active Learning strategies
-  - learning curves
-  - strategy trade-offs
+| Класс | Описание | Строк |
+|---|---|---|
+| `navigation` | Маршруты, карты, GPS, лоция | 51 |
+| `safety` | Снаряжение, безопасность, спасение | 77 |
+| `equipment` | Паруса, такелаж, оборудование лодки | 59 |
+| `weather` | Погода, ветер, состояние моря | 24 |
+| `licensing` | Сертификаты, обучение, правила | 9 |
+| `other_or_offtopic` | Нетематические тексты | 389 |
 
-This gives the project two modes of use:
+---
 
-- dashboard for a user-friendly end-to-end workflow
-- notebooks for exploratory and presentation-friendly analysis
+## Структура проекта
 
-### Recommended launch command
-
-For EDA:
-
-```powershell
-New-Item -ItemType Directory -Force -Path .jupyter_runtime\runtime | Out-Null
-$env:JUPYTER_CONFIG_DIR = "$PWD\.jupyter_runtime"
-$env:JUPYTER_RUNTIME_DIR = "$PWD\.jupyter_runtime\runtime"
-$env:JUPYTER_ALLOW_INSECURE_WRITES = "true"
-.\.venv\Scripts\python.exe -m notebook notebooks/eda.ipynb
+```
+smart-data-pipeline/
+├── agents/
+│   ├── data_collection_agent.py
+│   ├── data_quality_agent.py
+│   ├── annotation_agent.py
+│   └── al_agent.py
+├── core/
+│   ├── context_memory.py        # сохраняется в reports/context_memory.json
+│   ├── llm_client.py            # Gemini fallback chain + обрезка промптов
+│   └── model_wrapper.py         # TF-IDF + LogReg (stub DistilBERT готов)
+├── data/
+│   ├── raw/dataset.parquet
+│   ├── raw/dataset_clean.parquet
+│   ├── labeled/annotated.parquet
+│   └── review_queue.csv
+├── docs/screenshots/            # скриншоты UI для README
+├── models/
+│   ├── classifier.pkl
+│   └── label_encoder.pkl
+├── notebooks/
+│   ├── eda.ipynb
+│   ├── al_experiment.ipynb
+│   └── export_eda.py
+├── pipeline/
+│   └── run_pipeline.py          # Prefect flow — один запуск делает всё
+├── reports/                     # автогенерируемые артефакты
+├── tests/                       # 113 тестов
+├── ui/
+│   └── app.py                   # Streamlit-дашборд
+├── config.yaml                  # тема, классы, настройки источников
+├── .env.example
+└── requirements.txt
 ```
 
-For Active Learning:
+---
 
-```powershell
-New-Item -ItemType Directory -Force -Path .jupyter_runtime\runtime | Out-Null
-$env:JUPYTER_CONFIG_DIR = "$PWD\.jupyter_runtime"
-$env:JUPYTER_RUNTIME_DIR = "$PWD\.jupyter_runtime\runtime"
-$env:JUPYTER_ALLOW_INSECURE_WRITES = "true"
-.\.venv\Scripts\python.exe -m notebook notebooks/al_experiment.ipynb
+## Запуск тестов
+
+```bash
+# Все тесты
+.venv\Scripts\python.exe -m pytest tests -v --tb=short
+
+# По модулям
+pytest tests\test_ui.py -v                  # UI и конструктор отчётов
+pytest tests\test_pipeline.py -v            # оркестрация Prefect
+pytest tests\test_data_collection.py -v     # агент сбора данных
+pytest tests\test_llm_client.py -v          # LLM-клиент (в основном моки)
+pytest tests\test_eda_export.py -v          # экспорт EDA
 ```
 
-### Notebook tips
+> Два теста в `test_data_collection.py` делают реальные сетевые вызовы к HuggingFace (`test_huggingface_fetch`, `test_huggingface_validates_text_column`). Все Gemini-тесты замоканы.
 
-- Always run notebooks from the project root.
-- Use the project Python from `.venv`, not a global `jupyter.exe`.
-- After changing the topic or rerunning the pipeline, do:
-  - `Restart Kernel`
-  - `Run All`
-- If the terminal looks "stuck", wait until you see:
-  - `Jupyter Server ... is running at:`
+---
 
-### If Jupyter startup is too slow
+## Отчёты
 
-On some systems, notebook startup can become slow because `jsonschema` falls back to heavier URI validation imports.
+| Отчёт | Описание |
+|---|---|
+| `reports/domain_reformulation.md` | Детали domain reformulation |
+| `reports/quality_report.md` | Сводка данных до/после чистки |
+| `reports/annotation_spec.md` | Спецификация разметки |
+| `reports/eda_report.html` | Интерактивный EDA-отчёт (Plotly) |
+| `reports/model_metrics.json` | Финальные метрики модели |
+| `reports/learning_curve.html` | Кривая активного обучения |
+| `reports/strategy_comparison.html` | Сравнение AL-стратегий |
+| `reports/context_memory.json` | Состояние пайплайна между запусками |
+| `models/classifier.pkl` | Обученная sklearn-модель |
 
-If needed, install:
+---
 
-```powershell
-.\.venv\Scripts\python.exe -m pip install rfc3987
-```
+## Известные ограничения
 
-## Practical Tips and Lifehacks
+- **Gemini free tier** может возвращать `429 RESOURCE_EXHAUSTED` или `503 UNAVAILABLE` — пайплайн деградирует корректно, но LLM-функции будут недоступны
+- **Первый запуск** скачивает `facebook/bart-large-mnli` (~1.6 ГБ) — медленно на CPU, нужен интернет
+- **Вывод пайплайна в UI** буферизуется до конца процесса (`subprocess.run(..., capture_output=True)` в `ui/app.py`)
+- **Гранулярность источников в онбординге** жёстко привязана к sailing-коллектору; для других тем основной путь — `topic_bootstrap` / тематические датасеты HuggingFace
+- **Kaggle-коллектор** выключен по умолчанию (`sources.kaggle.enabled: false` в `config.yaml`)
+- **DistilBERT** не реализован — в `core/model_wrapper.py` только stub с `NotImplementedError`; рабочий классификатор — TF-IDF + LogReg
+- **После смены темы в Jupyter** — нужен Restart Kernel + Run All
+- **Streamlit** выводит в логи deprecation warning по `use_container_width` (косметически, не влияет на работу)
+- **Скрапинг** зависит от доступности сайтов и правил `robots.txt`
 
-### 1. Use English topics and labels
+---
 
-This gives better zero-shot confidence and cleaner class names.
+## Ретроспектива
 
-### 2. Restart Streamlit after changing `.env`
+**Что сработало хорошо**
+- Fallback chain для Gemini — пайплайн не падает полностью при недоступности LLM
+- `ContextMemory` — каждый агент знает, что сделал предыдущий
+- Graceful degradation везде — тесты проходят без реальных API-вызовов
+- Streamlit UI — ключевые действия доступны без CLI
 
-Especially after replacing `GEMINI_API_KEY`.
+**Что можно улучшить**
+- Только 23.4% тематических данных — нужно больше sailing-специфичных источников
+- Классы `navigation` и `weather` слабые (F1 < 0.35) из-за малого числа примеров
+- Gemini на free tier нестабилен — стоит рассмотреть более стабильный тариф или провайдера
+- `sailingforums` сильно проседает после чистки (20 → 5 строк)
 
-### 3. If Gemini quota is exhausted
+**Что сделала бы иначе**
+- Начала бы с более тематических датасетов HuggingFace вместо `emotion`/`tweets`
+- Добавила бы аугментацию для малых классов
+- Реализовала бы fine-tune DistilBERT как следующий baseline upgrade
 
-The UI may show `429 RESOURCE_EXHAUSTED`.
-
-What happens then:
-
-- source suggestion may switch to heuristics
-- chat may switch to fallback
-- class refresh may degrade to topic-aware fallback classes
-- the **core pipeline still remains usable**
-
-### 3.1. If Gemini is temporarily unavailable but you still need to demo the project
-
-Use the default sailing topic or topic-aware fallbacks and focus on:
-
-- onboarding
-- confidence threshold
-- HITL
-- retraining
-- analytics
-- report export
-
-This still demonstrates the main product value.
-
-### 4. If you create a new Gemini key in the same project
-
-The quota may still be shared at the project level.  
-A new key does not always mean a fresh quota.
-
-### 5. If analytics looks outdated
-
-Use:
-
-- `♻️ Rebuild EDA report`
-
-inside the Analytics tab.
-
-### 6. If the queue is still from the old topic
-
-Rerun:
-
-```powershell
-python pipeline/run_pipeline.py
-```
-
-The UI explicitly protects against stale-topic artifacts, so old queue data should not silently appear as if it belongs to the new domain.
-
-## Configuration Highlights
-
-The main configuration file is:
-
-- `config.yaml`
-
-Important sections:
-
-- `domain.topic`
-- `domain.classes`
-- `annotation.confidence_threshold`
-- `quality.strategy`
-- `quality.fuzzy_threshold`
-- `active_learning.strategy`
-- `model.type`
-- `llm.model`
-
-This makes the project highly configurable without editing the core logic.
-
-## Testing
-
-The repository includes tests for:
-
-- data collection
-- data quality
-- annotation
-- active learning
-- model wrapper
-- LLM client
-- pipeline orchestration
-- EDA export
-- UI logic
-- project structure
-
-Run the suite with:
-
-```powershell
-pytest tests -v --tb=short
-```
-
-## Current Limitations
-
-The project is strong, but it is important to be honest about the current stage:
-
-- Kaggle is present but disabled by default because the configured Kaggle datasets are not textual.
-- For non-sailing topics, the pipeline may rely heavily on **topic bootstrap texts** until richer real collectors are added.
-- DistilBERT is planned, but the stable production baseline is still sklearn.
-- Some LLM-dependent features are limited by Gemini quota.
-- Generic source suggestions in the onboarding UI are broader than the set of collectors currently materialized in code.
+---
 
 ## Roadmap
 
-- richer topic-specific real data collectors
-- DistilBERT / transformer-based classifier
-- broader multilingual support
-- more export formats
-- stronger domain-specific datasets
-- improved notebook ergonomics
-
-## Final Takeaway
-
-This project is best understood not as "a classifier", but as a **topic-aware ML system**:
-
-- change the topic
-- rebuild data
-- clean and annotate texts
-- review low-confidence cases
-- retrain the model
-- inspect analytics
-- export results
-
-That end-to-end consistency is the main value of `Smart Data Pipeline`.
+- [ ] Мультимодальность — изображения + текст
+- [ ] Аудио-модальность — речь через Whisper
+- [ ] Табличные данные + текст — Kaggle structured datasets совместно с текстовыми источниками
+- [ ] DistilBERT — transformer-классификатор (stub готов в `model_wrapper.py`)
+- [ ] Экспорт в PDF / Notion
+- [ ] Hidden API scraping — паттерн через Network tab браузера (stub в методе `scrape()`)
