@@ -14,6 +14,7 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from ui import report_generator
+from ui import app as ui_app
 
 
 def _write_config(base_dir: Path) -> None:
@@ -177,3 +178,34 @@ def test_collect_report_data_skips_stale_hypotheses(temp_project: Path) -> None:
 
     assert data["eda_is_fresh"] is False
     assert data["llm_hypotheses"] == []
+
+
+def test_compute_onboarding_readiness_requires_both_confirmations() -> None:
+    """Pipeline should unlock only after both classes and sources are confirmed."""
+    readiness = ui_app.compute_onboarding_readiness(
+        ["fitness_basics", "fitness_tools"],
+        classes_confirmed=True,
+        selected_sources=["HuggingFace / fitness dataset"],
+        sources_confirmed=True,
+    )
+
+    assert readiness["classes_ready"] is True
+    assert readiness["sources_ready"] is True
+    assert readiness["can_run_pipeline"] is True
+    assert readiness["missing_steps"] == []
+
+
+def test_compute_onboarding_readiness_blocks_missing_confirmations() -> None:
+    """Readiness helper should describe which onboarding step is still missing."""
+    readiness = ui_app.compute_onboarding_readiness(
+        ["fitness_basics", "fitness_tools"],
+        classes_confirmed=False,
+        selected_sources=[],
+        sources_confirmed=False,
+    )
+
+    assert readiness["can_run_pipeline"] is False
+    assert readiness["missing_steps"] == [
+        "подтвердите классы",
+        "подтвердите источники",
+    ]

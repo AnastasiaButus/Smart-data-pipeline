@@ -112,7 +112,37 @@ def clear_topic_source_state() -> None:
     st.session_state["generated_report_content"] = ""
     st.session_state["retrain_metrics"] = None
     st.session_state["retrain_topic"] = ""
+    st.session_state["classes_confirmed"] = False
+    st.session_state["sources_confirmed"] = False
+    st.session_state["pipeline_requires_refresh"] = True
     st.session_state.pop("confirmed_sources", None)
+
+
+def compute_onboarding_readiness(
+    current_classes: list[str],
+    *,
+    classes_confirmed: bool,
+    selected_sources: list[str],
+    sources_confirmed: bool,
+) -> dict[str, Any]:
+    """Return whether onboarding is ready to unlock the pipeline run button."""
+    normalized_classes = [str(item).strip() for item in current_classes if str(item).strip()]
+    normalized_sources = [str(item).strip() for item in selected_sources if str(item).strip()]
+    classes_ready = bool(normalized_classes) and bool(classes_confirmed)
+    sources_ready = bool(normalized_sources) and bool(sources_confirmed)
+
+    missing_steps: list[str] = []
+    if not classes_ready:
+        missing_steps.append("подтвердите классы")
+    if not sources_ready:
+        missing_steps.append("подтвердите источники")
+
+    return {
+        "classes_ready": classes_ready,
+        "sources_ready": sources_ready,
+        "can_run_pipeline": classes_ready and sources_ready,
+        "missing_steps": missing_steps,
+    }
 
 
 def run_eda_export_for_current_topic() -> tuple[bool, str]:
@@ -194,6 +224,7 @@ def run_pipeline_for_current_topic() -> None:
                 "details": combined_details,
             }
         st.session_state["pipeline_refresh_notice"] = notice
+        st.session_state["pipeline_requires_refresh"] = False
         ensure_review_state(force_reload=True)
         st.rerun()
 
@@ -213,6 +244,7 @@ def run_pipeline_for_current_topic() -> None:
         "message": message,
         "details": combined_output,
     }
+    st.session_state["pipeline_requires_refresh"] = True
     st.rerun()
 
 
@@ -507,6 +539,12 @@ def init_state() -> None:
     domain = config.get("domain", {}) or {}
     annotation = config.get("annotation", {}) or {}
     topic = str(domain.get("topic", "")).strip()
+    sources_cfg = config.get("sources", {}) or {}
+    saved_selected_sources = [
+        str(item).strip()
+        for item in sources_cfg.get("selected", [])
+        if str(item).strip()
+    ]
     classes = [
         str(item).strip()
         for item in domain.get("classes", [])
@@ -527,6 +565,7 @@ def init_state() -> None:
     st.session_state.setdefault("last_saved_topic", topic)
     st.session_state.setdefault("editing_topic", not bool(topic))
     st.session_state.setdefault("current_classes", classes)
+    st.session_state.setdefault("classes_confirmed", bool(classes))
     st.session_state.setdefault(
         "review_label",
         str(domain.get("review_label", "other_or_offtopic")).strip()
@@ -536,8 +575,9 @@ def init_state() -> None:
         "confidence_threshold",
         float(annotation.get("confidence_threshold", 0.7)),
     )
-    st.session_state.setdefault("selected_sources", [])
+    st.session_state.setdefault("selected_sources", saved_selected_sources)
     st.session_state.setdefault("selected_sources_draft", [])
+    st.session_state.setdefault("sources_confirmed", bool(saved_selected_sources))
     st.session_state.setdefault("source_suggestions", [])
     st.session_state.setdefault("messages", [])
     st.session_state.setdefault("generated_report_content", "")
@@ -545,6 +585,7 @@ def init_state() -> None:
     st.session_state.setdefault("skip_active_learning", False)
     st.session_state.setdefault("skip_hitl", False)
     st.session_state.setdefault("auto_run_pipeline_pending", False)
+    st.session_state.setdefault("pipeline_requires_refresh", not get_topic_data_status(config)["is_fresh"])
     st.session_state.setdefault("pipeline_refresh_notice", None)
     st.session_state.setdefault("last_pipeline_run_output", "")
     st.session_state.setdefault("last_pipeline_run_code", 0)
@@ -603,7 +644,10 @@ def topic_dialog():
                         topic=normalized_topic,
                         classes=default_classes,
                     )
-                    st.session_state["auto_run_pipeline_pending"] = True
+                    st.session_state["auto_run_pipeline_pending"] = False
+                    st.session_state["classes_confirmed"] = False
+                    st.session_state["sources_confirmed"] = False
+                    st.session_state["pipeline_requires_refresh"] = True
                     st.session_state["pipeline_refresh_notice"] = None
                     st.session_state["last_pipeline_run_output"] = ""
                     st.session_state["last_pipeline_run_code"] = 0
@@ -886,6 +930,8 @@ def update_classes_with_llm(llm_client: GeminiLLMClient) -> None:
     st.session_state["review_label"] = review_label
     st.session_state.pop("classes_text_synced_from_classes", None)
     persist_domain_settings(classes=proposed_classes)
+    st.session_state["classes_confirmed"] = True
+    st.session_state["pipeline_requires_refresh"] = True
     st.session_state["last_domain_spec"] = {
         "normalized_topic": topic,
         "recommended_classes": proposed_classes,
@@ -1049,6 +1095,8 @@ def render_sidebar(llm_client: GeminiLLMClient) -> float:
             if len(new_classes) >= 2:
                 persist_domain_settings(classes=new_classes)
                 st.session_state["current_classes"] = new_classes
+                st.session_state["classes_confirmed"] = True
+                st.session_state["pipeline_requires_refresh"] = True
                 st.session_state.pop("classes_text_synced_from_classes", None)
                 st.sidebar.success(f"✅ Сохранено {len(new_classes)} классов")
                 st.rerun()
@@ -1067,6 +1115,8 @@ def render_sidebar(llm_client: GeminiLLMClient) -> float:
             )
             persist_domain_settings(classes=default_classes)
             st.session_state["current_classes"] = default_classes
+            st.session_state["classes_confirmed"] = True
+            st.session_state["pipeline_requires_refresh"] = True
             st.session_state.pop("classes_text_synced_from_classes", None)
             st.rerun()
 
@@ -1822,6 +1872,18 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
         load_config().get("domain", {}).get("topic", "sailing and yacht navigation"),
     )
     status = get_topic_data_status()
+    suggestions = st.session_state.get("source_suggestions", [])
+    effective_suggestions = suggestions or heuristic_source_suggestions(current_topic).get(
+        "sources", []
+    )
+    selected_sources = st.session_state.get("selected_sources", [])
+    onboarding_ready = compute_onboarding_readiness(
+        st.session_state.get("current_classes", []),
+        classes_confirmed=st.session_state.get("classes_confirmed", False),
+        selected_sources=selected_sources,
+        sources_confirmed=st.session_state.get("sources_confirmed", False),
+    )
+    needs_pipeline_refresh = bool(st.session_state.get("pipeline_requires_refresh", False)) or not status["is_fresh"]
     st.title(f"{get_topic_emoji(current_topic)} Smart Data Pipeline")
 
     notice = st.session_state.get("pipeline_refresh_notice")
@@ -1840,7 +1902,7 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
             with st.expander("Показать лог запуска pipeline"):
                 st.code(str(notice["details"]))
 
-    if not status["is_fresh"]:
+    if needs_pipeline_refresh:
         with st.container(border=True):
             st.markdown("### 🔄 Нужно обновить данные под новую тему")
             st.markdown(
@@ -1863,6 +1925,13 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
                 st.markdown("**3. Результат**")
                 st.caption("После этого оживут HITL, аналитика и чат")
 
+            if not onboarding_ready["can_run_pipeline"]:
+                st.warning(
+                    "Перед запуском pipeline завершите онбординг: "
+                    + ", ".join(onboarding_ready["missing_steps"])
+                    + "."
+                )
+
             action_col1, action_col2 = st.columns([1.4, 1])
             with action_col1:
                 if st.button(
@@ -1870,6 +1939,7 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
                     type="primary",
                     key="run_pipeline_from_onboarding",
                     use_container_width=True,
+                    disabled=not onboarding_ready["can_run_pipeline"],
                 ):
                     with st.spinner("Запускаю pipeline. Это может занять несколько минут..."):
                         run_pipeline_for_current_topic()
@@ -1878,15 +1948,6 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
                 st.markdown("**Если хочешь вручную**")
                 with st.expander("Показать команду"):
                     st.code("python pipeline/run_pipeline.py")
-
-        if st.session_state.get("auto_run_pipeline_pending", False):
-            st.info(
-                "Тема изменена — автоматически обновляю данные. "
-                "Подожди немного: после завершения здесь появится результат."
-            )
-            with st.spinner("Автоматически запускаю pipeline для новой темы..."):
-                run_pipeline_for_current_topic()
-            return
 
     st.subheader("Шаг 1. Проверьте тему и классы")
     with st.container(border=True):
@@ -1911,6 +1972,28 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
                 "Классы можно обновить кнопкой **🔄 Обновить классы через LLM** или поправить вручную."
             )
 
+        confirm_col1, confirm_col2 = st.columns([1, 2])
+        with confirm_col1:
+            if st.button("✅ Подтвердить текущие классы", key="confirm_current_classes"):
+                current_classes = [
+                    str(item).strip()
+                    for item in st.session_state.get("current_classes", [])
+                    if str(item).strip()
+                ]
+                if len(current_classes) < 2:
+                    st.warning("Нужно минимум 2 класса, чтобы продолжить.")
+                else:
+                    persist_domain_settings(classes=current_classes)
+                    st.session_state["classes_confirmed"] = True
+                    st.session_state["pipeline_requires_refresh"] = True
+                    st.success("Классы подтверждены. Можно переходить к выбору источников.")
+                    st.rerun()
+        with confirm_col2:
+            if st.session_state.get("classes_confirmed", False):
+                st.success("Классы подтверждены для текущей темы.")
+            else:
+                st.info("Сначала проверьте классы, затем подтвердите их этой кнопкой.")
+
     if st.session_state.get("selected_sources"):
         st.success(
             "Выбраны источники: "
@@ -1929,21 +2012,9 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
         with st.spinner("Gemini ищет источники..."):
             suggestion_payload = find_sources_with_llm(current_topic, llm_client)
         st.session_state["source_suggestions"] = suggestion_payload.get("sources", [])
-        if suggestion_payload.get("suggested_classes"):
-            refreshed_classes = [
-                str(item).strip()
-                for item in suggestion_payload.get("suggested_classes", [])
-                if str(item).strip()
-            ]
-            if refreshed_classes:
-                st.session_state["current_classes"] = refreshed_classes
-                st.session_state.pop("classes_text_synced_from_classes", None)
-                persist_domain_settings(classes=refreshed_classes)
-
-    suggestions = st.session_state.get("source_suggestions", [])
-    effective_suggestions = suggestions or heuristic_source_suggestions(current_topic).get(
-        "sources", []
-    )
+        effective_suggestions = st.session_state["source_suggestions"] or heuristic_source_suggestions(
+            current_topic
+        ).get("sources", [])
 
     sources_detail = build_sources_detail(effective_suggestions, current_topic)
     if len(sources_detail) > 5:
@@ -2015,6 +2086,9 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
     metric_col2.metric("Ожидаемых строк", f"~{total_rows}")
 
     if st.button("✅ Использовать выбранные источники", type="primary", key="confirm_source_selection"):
+        if not selected_labels:
+            st.warning("Сначала выберите хотя бы один источник.")
+            return
         selected = {
             key: value
             for key, value in st.session_state["selected_items"].items()
@@ -2022,6 +2096,8 @@ def render_onboarding_tab(llm_client: GeminiLLMClient) -> None:
         }
         st.session_state["confirmed_sources"] = selected
         st.session_state["selected_sources"] = selected_labels
+        st.session_state["sources_confirmed"] = True
+        st.session_state["pipeline_requires_refresh"] = True
         st.session_state["editing_topic"] = False
         cfg_data = load_config()
         sources_cfg = cfg_data.setdefault("sources", {})
