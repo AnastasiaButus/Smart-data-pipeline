@@ -1,4 +1,4 @@
-# 🧠 Smart Data Pipeline
+# Smart Data Pipeline
 
 ![Tests](https://img.shields.io/badge/тестов-113%20passed-brightgreen)
 ![Streamlit](https://img.shields.io/badge/UI-Streamlit-red)
